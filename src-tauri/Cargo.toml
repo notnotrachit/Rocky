@@ -1,0 +1,30 @@
+[package]
+name = "rocky"
+version = "0.1.0"
+description = "A local LLM desktop pet"
+authors = ["Rachit Khurana"]
+edition = "2021"
+
+[lib]
+name = "rocky_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+aisdk = { version = "0.5.2", features = ["openai", "anthropic", "google"] }
+objc2 = "0.6.4"
+objc2-foundation = "0.3.2"
+objc2-app-kit = "0.3.2"
+core-foundation = "0.10.1"
+schemars = "1.2.1"
+futures-util = "0.3.32"
+tokio = { version = "1.52.2", features = ["fs", "io-util"] }
+cpal = "0.16.0"
+transcribe-rs = { version = "0.3.3", features = ["whisper-metal"] }
+tauri-plugin-global-shortcut = "2.3.1"

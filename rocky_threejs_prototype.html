@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rocky - Project Hail Mary</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: 'Segoe UI', sans-serif; }
+        canvas { display: block; }
+        #ui { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.6); color: white; padding: 10px 20px; border-radius: 30px; pointer-events: none; font-size: 14px; letter-spacing: 1px; }
+        #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: white; font-size: 24px; font-weight: bold; transition: opacity 0.5s; }
+        #anim-ui { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; z-index: 10; }
+        #anim-ui button { background: rgba(0,0,0,0.6); color: white; border: 1px solid #d19426; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 14px; transition: all 0.2s; }
+        #anim-ui button:hover, #anim-ui button.active { background: #d19426; color: black; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div id="loading">Constructing Rocky...</div>
+    <div id="anim-ui">
+        <button class="active" onclick="setAnim('idle',this)">Idle</button>
+        <button onclick="setAnim('walk',this)">Walk</button>
+        <button onclick="setAnim('run',this)">Run</button>
+        <button onclick="setAnim('inspect',this)">Inspect</button>
+        <button onclick="setAnim('confused',this)">Confused</button>
+        <button onclick="setAnim('thinking',this)">Think</button>
+        <button onclick="setAnim('sleep',this)">Sleep</button>
+        <button onclick="setAnim('wake',this)">Wake</button>
+    </div>
+    <div id="ui">Drag to Rotate | Scroll to Zoom</div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script>
+    // Simplex noise for procedural textures
+    const _p=[151,160,137,91,90,15,131,13,201,95,96,53,194,233,7,225,140,36,103,30,69,142,8,99,37,240,21,10,23,190,6,148,247,120,234,75,0,26,197,62,94,252,219,203,117,35,11,32,57,177,33,88,237,149,56,87,174,20,125,136,171,168,68,175,74,165,71,134,139,48,27,166,77,146,158,231,83,111,229,122,60,211,133,230,220,105,92,41,55,46,245,40,244,102,143,54,65,25,63,161,1,216,80,73,209,76,132,187,208,89,18,169,200,196,135,130,116,188,159,86,164,100,109,198,173,186,3,64,52,217,226,250,124,123,5,202,38,147,118,126,255,82,85,212,207,206,59,227,47,16,58,17,182,189,28,42,223,183,170,213,119,248,152,2,44,154,163,70,221,153,101,155,167,43,172,9,129,22,39,253,19,98,108,110,79,113,224,232,178,185,112,104,218,246,97,228,251,34,242,193,238,210,144,12,191,179,162,241,81,51,145,235,249,14,239,107,49,192,214,31,181,199,106,157,184,84,204,176,115,121,50,45,127,4,150,254,138,236,205,93,222,114,67,29,24,72,243,141,128,195,78,66,215,61,156,180];
+    const perm=new Array(512);for(let i=0;i<512;i++)perm[i]=_p[i&255];
+    function fade(t){return t*t*t*(t*(t*6-15)+10)}
+    function lerp(a,b,t){return a+t*(b-a)}
+    function grad(hash,x,y,z){const h=hash&15;const u=h<8?x:y;const v=h<4?y:h===12||h===14?x:z;return((h&1)===0?u:-u)+((h&2)===0?v:-v)}
+    function perlin3(x,y,z){const X=Math.floor(x)&255,Y=Math.floor(y)&255,Z=Math.floor(z)&255;x-=Math.floor(x);y-=Math.floor(y);z-=Math.floor(z);const u=fade(x),v=fade(y),w=fade(z);const A=perm[X]+Y,AA=perm[A]+Z,AB=perm[A+1]+Z,B=perm[X+1]+Y,BA=perm[B]+Z,BB=perm[B+1]+Z;return lerp(lerp(lerp(grad(perm[AA],x,y,z),grad(perm[BA],x-1,y,z),u),lerp(grad(perm[AB],x,y-1,z),grad(perm[BB],x-1,y-1,z),u),v),lerp(lerp(grad(perm[AA+1],x,y,z-1),grad(perm[BA+1],x-1,y,z-1),u),lerp(grad(perm[AB+1],x,y-1,z-1),grad(perm[BB+1],x-1,y-1,z-1),u),v),w)}
+    function fbm(x,y,z,oct){let v=0,a=0.5,f=1;for(let i=0;i<oct;i++){v+=a*perlin3(x*f,y*f,z*f);a*=0.5;f*=2;}return v;}
+
+    let scene,camera,renderer,controls,rockyGroup,coreMesh,glowMat;
+    const legsData=[];
+    let currentAnim='idle',animTime=0;
+
+    function setAnim(name,btn){currentAnim=name;document.querySelectorAll('#anim-ui button').forEach(b=>b.classList.remove('active'));if(btn)btn.classList.add('active');}
+
+    // Displace vertices using noise for rocky organic surface
+    function displaceGeo(geo,scale,amount){
+        const pos=geo.attributes.position;
+        for(let i=0;i<pos.count;i++){
+            const x=pos.getX(i),y=pos.getY(i),z=pos.getZ(i);
+            const n=fbm(x*scale,y*scale,z*scale,4);
+            const len=Math.sqrt(x*x+y*y+z*z)||1;
+            pos.setXYZ(i,x+x/len*n*amount,y+y/len*n*amount,z+z/len*n*amount);
+        }
+        pos.needsUpdate=true;
+        geo.computeVertexNormals();
+    }
+
+    // Generate cracked rock canvas texture
+    function makeRockTexture(w,h,isBump){
+        const c=document.createElement('canvas');c.width=w;c.height=h;
+        const ctx=c.getContext('2d');
+        // Base color
+        if(!isBump){
+            ctx.fillStyle='#8b7d6b';ctx.fillRect(0,0,w,h);
+            // Noise variation
+            for(let i=0;i<w*h*0.3;i++){
+                const x=Math.random()*w,y=Math.random()*h;
+                const s=Math.random()*3+1;
+                const v=Math.floor(Math.random()*40+100);
+                ctx.fillStyle=`rgb(${v+30},${v+20},${v})`;
+                ctx.fillRect(x,y,s,s);
+            }
+        } else {
+            ctx.fillStyle='#808080';ctx.fillRect(0,0,w,h);
+        }
+        // Cracks
+        const numCracks=isBump?40:30;
+        for(let i=0;i<numCracks;i++){
+            ctx.beginPath();
+            let cx=Math.random()*w,cy=Math.random()*h;
+            ctx.moveTo(cx,cy);
+            const segs=Math.floor(Math.random()*8+4);
+            for(let j=0;j<segs;j++){
+                cx+=Math.random()*60-30;cy+=Math.random()*60-30;
+                ctx.lineTo(cx,cy);
+            }
+            ctx.strokeStyle=isBump?'#333':'#4a3f32';
+            ctx.lineWidth=Math.random()*2+0.5;
+            ctx.stroke();
+            // Branch cracks
+            if(Math.random()>0.5){
+                ctx.beginPath();ctx.moveTo(cx,cy);
+                ctx.lineTo(cx+Math.random()*30-15,cy+Math.random()*30-15);
+                ctx.strokeStyle=isBump?'#444':'#5a4f42';
+                ctx.lineWidth=Math.random()*1.5+0.3;
+                ctx.stroke();
+            }
+        }
+        // Surface detail patches
+        for(let i=0;i<60;i++){
+            const x=Math.random()*w,y=Math.random()*h,r=Math.random()*15+5;
+            const v=isBump?Math.floor(Math.random()*40+108):0;
+            ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);
+            ctx.fillStyle=isBump?`rgb(${v},${v},${v})`:`rgba(${100+Math.random()*40},${90+Math.random()*30},${70+Math.random()*20},0.3)`;
+            ctx.fill();
+        }
+        const tex=new THREE.CanvasTexture(c);
+        tex.wrapS=tex.wrapT=THREE.RepeatWrapping;
+        return tex;
+    }
+
+    function init(){
+        scene=new THREE.Scene();
+        scene.background=new THREE.Color(0x2a2a2a);
+        scene.fog=new THREE.FogExp2(0x2a2a2a,0.008);
+
+        camera=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,0.1,100);
+        camera.position.set(10,7,14);
+
+        renderer=new THREE.WebGLRenderer({antialias:true});
+        renderer.setSize(innerWidth,innerHeight);
+        renderer.setPixelRatio(devicePixelRatio);
+        renderer.shadowMap.enabled=true;
+        renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+        renderer.toneMapping=THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure=1.1;
+        document.body.appendChild(renderer.domElement);
+
+        controls=new THREE.OrbitControls(camera,renderer.domElement);
+        controls.enableDamping=true;controls.dampingFactor=0.05;
+        controls.target.set(0,4.2,0);
+        controls.autoRotate=true;controls.autoRotateSpeed=0.8;
+
+        // Lighting
+        scene.add(new THREE.AmbientLight(0xffecd4,0.68));
+        const dir=new THREE.DirectionalLight(0xfff5e6,0.95);
+        dir.position.set(5,18,10);dir.castShadow=true;
+        dir.shadow.mapSize.set(2048,2048);
+        dir.shadow.camera.near=0.5;dir.shadow.camera.far=50;
+        const d=15;dir.shadow.camera.left=-d;dir.shadow.camera.right=d;
+        dir.shadow.camera.top=d;dir.shadow.camera.bottom=-d;
+        dir.shadow.bias=-0.0005;
+        scene.add(dir);
+        const fill=new THREE.DirectionalLight(0x88aacc,0.3);fill.position.set(-10,5,-10);scene.add(fill);
+        const frontFill=new THREE.DirectionalLight(0xffffff,0.55);frontFill.position.set(0,7,14);scene.add(frontFill);
+        // Rim light
+        const rim=new THREE.DirectionalLight(0xffcc88,0.25);rim.position.set(-5,8,-12);scene.add(rim);
+
+        // Materials
+        const rockDiffuse=makeRockTexture(1024,1024,false);
+        const rockBump=makeRockTexture(1024,1024,true);
+        const rockMat=new THREE.MeshStandardMaterial({
+            map:rockDiffuse, bumpMap:rockBump, bumpScale:0.8,
+            color:0xb29f86, emissive:0x1c1711, emissiveIntensity:0.22, roughness:0.88, metalness:0.05, flatShading:true
+        });
+        glowMat=new THREE.MeshStandardMaterial({
+            color:0x3ddc84, emissive:0x3ddc84, emissiveIntensity:2.0,
+            roughness:0.3, transparent:true, opacity:0.85
+        });
+
+        // Floor
+        const floor=new THREE.Mesh(new THREE.PlaneGeometry(80,80),new THREE.ShadowMaterial({opacity:0.1}));
+        floor.rotation.x=-Math.PI/2;floor.receiveShadow=true;scene.add(floor);
+        // Ground plane for context
+        const ground=new THREE.Mesh(new THREE.PlaneGeometry(80,80),new THREE.MeshStandardMaterial({color:0x3a3a3a,roughness:1}));
+        ground.rotation.x=-Math.PI/2;ground.position.y=-0.01;scene.add(ground);
+
+        // === BUILD ROCKY ===
+        rockyGroup=new THREE.Group();rockyGroup.rotation.y=Math.PI;scene.add(rockyGroup);
+        coreMesh=new THREE.Group();coreMesh.position.y=6.2;rockyGroup.add(coreMesh);
+
+        // Main carapace - wide flattened dome like a boulder
+        const carapGeo=new THREE.SphereGeometry(3.0,12,8,0,Math.PI*2,0,Math.PI*0.6);
+        displaceGeo(carapGeo,0.6,0.35);
+        const carapace=new THREE.Mesh(carapGeo,rockMat);
+        carapace.scale.set(1.25,0.65,1.05);
+        carapace.position.y=0.3;
+        carapace.castShadow=true;carapace.receiveShadow=true;
+        coreMesh.add(carapace);
+
+        // Underbelly - connects body to legs
+        const bellyGeo=new THREE.SphereGeometry(2.2,10,6,0,Math.PI*2,Math.PI*0.3,Math.PI*0.5);
+        displaceGeo(bellyGeo,0.7,0.2);
+        const belly=new THREE.Mesh(bellyGeo,rockMat);
+        belly.position.y=-0.6;belly.scale.set(1.15,0.9,0.95);
+        belly.castShadow=true;belly.receiveShadow=true;
+        coreMesh.add(belly);
+
+        // Top ridge detail - rocky protrusion on top
+        const ridgeGeo=new THREE.DodecahedronGeometry(1.2,1);
+        displaceGeo(ridgeGeo,0.8,0.25);
+        const ridge=new THREE.Mesh(ridgeGeo,rockMat);
+        ridge.scale.set(1.8,0.35,1.1);ridge.position.y=1.5;
+        ridge.castShadow=true;coreMesh.add(ridge);
+
+        // Body glow spots
+        const bodyGlowPositions=[
+            [1.8,1.2,1.5],[-1.8,1.2,1.5],[2.2,0.8,-0.8],[-2.2,0.8,-0.8],[0,1.8,0],[1.0,0.5,2.2],[-1.0,0.5,2.2]
+        ];
+        bodyGlowPositions.forEach(p=>{
+            const g=new THREE.Mesh(new THREE.SphereGeometry(0.22,6,4),glowMat);
+            g.position.set(p[0],p[1],p[2]);
+            g.scale.set(1,0.5,1);
+            coreMesh.add(g);
+        });
+
+        // Helper: create a rocky leg segment
+        function makeSegment(rTop,rBot,len,thick){
+            const geo=new THREE.CylinderGeometry(rTop*thick,rBot*thick,len,8);
+            geo.translate(0,-len/2,0);
+            displaceGeo(geo,0.9,0.12);
+            const m=new THREE.Mesh(geo,rockMat);
+            m.castShadow=true;m.receiveShadow=true;
+            return m;
+        }
+        // Helper: rocky joint ball
+        function makeJoint(r,thick){
+            const geo=new THREE.DodecahedronGeometry(r*thick,1);
+            displaceGeo(geo,1.0,0.15);
+            const m=new THREE.Mesh(geo,rockMat);
+            m.scale.set(1.15,0.85,1.0);
+            m.castShadow=true;m.receiveShadow=true;
+            return m;
+        }
+
+        // Leg profiles - 5 legs splayed like a spider
+        const legs=[
+            {name:'front',    yaw:0,     ax:[0,-0.3,3.2],     uAng:-0.25, lAng:1.1,  uLen:3.0, lLen:3.0, th:0.85, lift:0.8},
+            {name:'frontLeft', yaw:1.1,   ax:[-2.9,-0.2,2.2],  uAng:-0.3,  lAng:1.2,  uLen:3.8, lLen:3.8, th:0.85, lift:1.0},
+            {name:'frontRight',yaw:-1.1,  ax:[2.9,-0.2,2.2],   uAng:-0.3,  lAng:1.2,  uLen:3.8, lLen:3.8, th:0.85, lift:1.0},
+            {name:'rearLeft',  yaw:2.5,   ax:[-2.9,-0.4,-2.0], uAng:-0.2,  lAng:1.0,  uLen:3.2, lLen:3.4, th:0.7,  lift:0.6},
+            {name:'rearRight', yaw:-2.5,  ax:[2.9,-0.4,-2.0],  uAng:-0.2,  lAng:1.0,  uLen:3.2, lLen:3.4, th:0.7,  lift:0.6}
+        ];
+
+        legs.forEach((L,i)=>{
+            const container=new THREE.Group();
+            container.position.set(L.ax[0],L.ax[1],L.ax[2]);
+            container.rotation.y=L.yaw;
+            coreMesh.add(container);
+
+            // Shoulder joint
+            container.add(makeJoint(1.05,L.th));
+
+            // Upper leg pivot
+            const upperJoint=new THREE.Group();
+            container.add(upperJoint);
+
+            // Upper leg segment
+            const uLeg=makeSegment(0.85,0.65,L.uLen,L.th);
+            uLeg.rotation.x=L.uAng;
+            if(L.name.includes('Left'))uLeg.rotation.z=-0.05;
+            if(L.name.includes('Right'))uLeg.rotation.z=0.05;
+            upperJoint.add(uLeg);
+
+            // Upper leg glow
+            const ug=new THREE.Mesh(new THREE.SphereGeometry(0.18,5,3),glowMat);
+            ug.position.set(0,-L.uLen*0.45,0.6);
+            uLeg.add(ug);
+
+            // Mid-segment plate on upper leg
+            const platGeo=new THREE.DodecahedronGeometry(0.55*L.th,0);
+            displaceGeo(platGeo,1.2,0.08);
+            const plat=new THREE.Mesh(platGeo,rockMat);
+            plat.position.set(0,-L.uLen*0.5,0);plat.scale.set(1.3,0.6,1.1);
+            plat.castShadow=true;uLeg.add(plat);
+
+            // Knee joint
+            const kneeJoint=new THREE.Group();
+            kneeJoint.position.set(0,-L.uLen,0);
+            uLeg.add(kneeJoint);
+            kneeJoint.add(makeJoint(0.9,L.th));
+
+            // Knee glow
+            const kg=new THREE.Mesh(new THREE.SphereGeometry(0.18,5,3),glowMat);
+            kg.position.set(0,0,0.8);kneeJoint.add(kg);
+
+            // Lower leg
+            const lLeg=makeSegment(0.6,0.42,L.lLen,L.th);
+            lLeg.rotation.x=L.lAng;
+            kneeJoint.add(lLeg);
+
+            // Lower leg mid plate
+            const lplat=new THREE.Mesh(new THREE.DodecahedronGeometry(0.4*L.th,0),rockMat);
+            lplat.position.set(0,-L.lLen*0.5,0);lplat.scale.set(1.2,0.5,1.0);
+            lplat.castShadow=true;lLeg.add(lplat);
+
+            // Lower leg glow
+            const lg=new THREE.Mesh(new THREE.SphereGeometry(0.15,5,3),glowMat);
+            lg.position.set(0,-L.lLen*0.6,0.5);lLeg.add(lg);
+
+            // Foot - blunt rocky tip
+            const footGeo=new THREE.DodecahedronGeometry(0.5*L.th,1);
+            displaceGeo(footGeo,1.0,0.1);
+            const foot=new THREE.Mesh(footGeo,rockMat);
+            foot.position.set(0,-L.lLen,0);foot.scale.set(1.1,1.4,1.0);
+            foot.castShadow=true;foot.receiveShadow=true;
+            lLeg.add(foot);
+
+            legsData.push({upper:upperJoint,knee:kneeJoint,uLeg,lLeg,baseUpper:L.uAng,baseLower:L.lAng,lift:L.lift,name:L.name,index:i});
+        });
+
+        document.getElementById('loading').style.opacity='0';
+        setTimeout(()=>document.getElementById('loading').style.display='none',500);
+        window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+    }
+
+    const clock=new THREE.Clock();
+    function animate(){
+        requestAnimationFrame(animate);
+        const delta=clock.getDelta();
+        animTime+=delta;
+        let tY=6.2,tRX=0,tRZ=0,tRY=0;
+        const sp={idle:2,walk:6,run:12,inspect:3,confused:3,thinking:2,sleep:0.8,wake:1.5}[currentAnim]||2;
+        const t=animTime*sp;
+
+        if(currentAnim==='idle'){
+            tY=6.2+Math.sin(t)*0.08;
+            tRY=Math.sin(t*0.5)*0.02;
+            legsData.forEach(l=>{
+                l.uLeg.rotation.x=l.baseUpper+Math.sin(t+l.index)*0.025;
+                l.lLeg.rotation.x=l.baseLower+Math.cos(t+l.index)*0.025;
+            });
+        } else if(currentAnim==='walk'){
+            tY=6.2+Math.abs(Math.sin(t*2.5))*0.18;
+            tRY=Math.sin(t*2.5)*0.05;
+            legsData.forEach((l,i)=>{
+                const ph=t+(i*Math.PI*2/5)*2;
+                l.uLeg.rotation.x=l.baseUpper+Math.sin(ph)*0.14*l.lift;
+                l.lLeg.rotation.x=l.baseLower+Math.cos(ph)*0.14*l.lift;
+                if(Math.sin(ph)>0)l.uLeg.rotation.x-=0.06*Math.sin(ph)*l.lift;
+            });
+        } else if(currentAnim==='run'){
+            tY=5.9+Math.abs(Math.sin(t*2.5))*0.28;
+            tRX=Math.PI/16;
+            legsData.forEach((l,i)=>{
+                const ph=t+(i*Math.PI*2/5)*2;
+                l.uLeg.rotation.x=l.baseUpper+Math.sin(ph)*0.28*l.lift;
+                l.lLeg.rotation.x=l.baseLower+Math.cos(ph)*0.24*l.lift;
+                if(Math.sin(ph)>0)l.uLeg.rotation.x-=0.1*Math.sin(ph)*l.lift;
+            });
+        } else if(currentAnim==='inspect'){
+            // Lean forward, front leg reaches out to poke/inspect
+            tY=5.8+Math.sin(t*0.8)*0.1;
+            tRX=0.25+Math.sin(t*0.6)*0.05;
+            legsData.forEach((l,i)=>{
+                if(l.name==='front'){
+                    // Front leg extends forward and down to inspect
+                    l.uLeg.rotation.x=-0.6+Math.sin(t*1.5)*0.15;
+                    l.lLeg.rotation.x=0.4+Math.sin(t*1.5+1)*0.1;
+                } else {
+                    // Others brace slightly
+                    l.uLeg.rotation.x=l.baseUpper+0.05;
+                    l.lLeg.rotation.x=l.baseLower-0.05+Math.sin(t*0.5+i)*0.02;
+                }
+            });
+        } else if(currentAnim==='confused'){
+            // Head tilts side to side, one leg scratches head
+            tY=6.2+Math.sin(t)*0.06;
+            tRZ=Math.sin(t*0.7)*0.2;
+            tRY=Math.sin(t*0.5)*0.15;
+            legsData.forEach((l,i)=>{
+                if(l.name==='frontRight'){
+                    // Leg lifts up to scratch head
+                    l.uLeg.rotation.x=-0.8+Math.sin(t*2.5)*0.12;
+                    l.lLeg.rotation.x=1.8+Math.cos(t*2.5)*0.1;
+                } else {
+                    l.uLeg.rotation.x=l.baseUpper+Math.sin(t*0.4+i)*0.04;
+                    l.lLeg.rotation.x=l.baseLower+Math.cos(t*0.4+i)*0.03;
+                }
+            });
+        } else if(currentAnim==='thinking'){
+            // Body tilts forward, one front leg up to chin, sways
+            tY=6.0+Math.sin(t*0.6)*0.1;
+            tRX=0.15+Math.sin(t*0.4)*0.05;
+            tRY=Math.sin(t*0.3)*0.1;
+            legsData.forEach((l,i)=>{
+                if(l.name==='frontLeft'){
+                    // Leg raised to chin area, tapping
+                    l.uLeg.rotation.x=-0.7+Math.sin(t*3)*0.06;
+                    l.lLeg.rotation.x=1.6+Math.cos(t*3)*0.08;
+                } else {
+                    l.uLeg.rotation.x=l.baseUpper+0.08;
+                    l.lLeg.rotation.x=l.baseLower-0.06;
+                }
+            });
+        } else if(currentAnim==='sleep'){
+            // Collapse fully - body sinks, legs fold flat
+            tY=2.8+Math.sin(t*0.4)*0.05;
+            tRX=0.1*Math.sin(t*0.3);
+            legsData.forEach(l=>{
+                l.uLeg.rotation.x=l.baseUpper+0.7;
+                l.lLeg.rotation.x=-0.1;
+            });
+        } else if(currentAnim==='wake'){
+            // Cycle: collapsed -> pushing up -> standing (loops over ~4 seconds)
+            const cycle=Math.min((animTime*sp)%6,1);// 0->1 over time
+            const wk=Math.min(cycle*1.5,1);
+            tY=2.8+(6.2-2.8)*wk+Math.sin(t*2)*0.05*wk;
+            tRX=0.1*(1-wk);
+            legsData.forEach(l=>{
+                const collapsed=l.baseUpper+0.7;
+                const standing=l.baseUpper;
+                l.uLeg.rotation.x=collapsed+(standing-collapsed)*wk;
+                const cLow=-0.1;
+                l.lLeg.rotation.x=cLow+(l.baseLower-cLow)*wk;
+            });
+        }
+
+        if(coreMesh){
+            coreMesh.position.y+=(tY-coreMesh.position.y)*0.15;
+            coreMesh.rotation.x+=(tRX-coreMesh.rotation.x)*0.15;
+            coreMesh.rotation.y+=(tRY-coreMesh.rotation.y)*0.15;
+            coreMesh.rotation.z+=(tRZ-coreMesh.rotation.z)*0.15;
+        }
+
+        // Pulse glow spots
+        const gp=0.7+Math.sin(animTime*3)*0.3;
+        glowMat.emissiveIntensity=1.5+gp;
+
+        controls.update();
+        renderer.render(scene,camera);
+    }
+
+    window.onload=()=>{init();animate();};
+    </script>
+</body>
+</html>
