@@ -11,7 +11,7 @@ export type PetAction = {
 
 export type Provider = "ollama" | "openai" | "anthropic" | "google";
 
-export type ControlTab = "chat" | "behavior" | "voice" | "privacy" | "debug";
+export type ControlTab = "chat" | "behavior" | "voice" | "memory" | "privacy" | "debug";
 
 export type OllamaHealth = {
   ready: boolean;
@@ -41,6 +41,8 @@ export type OllamaModel = {
 
 export type PlanResult = {
   action: PetAction;
+  memoriesUsed: MemoryItem[];
+  memoriesSaved: MemoryItem[];
 };
 
 export type ObservePlanResult = {
@@ -59,6 +61,17 @@ export type ControlSettings = {
   observationEnabled: boolean;
   quietMode: boolean;
   launchAtLogin: boolean;
+  memoryEnabled: boolean;
+};
+
+export type MemoryItem = {
+  id: string;
+  subject: string;
+  fact: string;
+  source: string;
+  confidence: number;
+  createdAt: number;
+  lastUsedAt: number;
 };
 
 export type VoiceSettings = {
@@ -109,6 +122,7 @@ export const defaultSettings: ControlSettings = {
   observationEnabled: false,
   quietMode: false,
   launchAtLogin: false,
+  memoryEnabled: true,
 };
 
 export const defaultVoiceSettings: VoiceSettings = {

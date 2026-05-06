@@ -1,6 +1,7 @@
 mod commands;
 mod llm;
 mod macos;
+mod memory;
 mod models;
 mod ollama;
 mod shortcuts;
@@ -28,6 +29,9 @@ pub fn run() {
             commands::request_accessibility_permission,
             commands::accessibility_observation,
             commands::observe_and_plan,
+            commands::memories,
+            commands::delete_memory,
+            commands::clear_memories,
             commands::get_pet_scale,
             commands::set_pet_scale,
             commands::get_control_settings,

@@ -3,7 +3,8 @@ use tauri::AppHandle;
 use crate::{
     llm,
     macos,
-    models::{AccessibilityObservation, ActiveApp, CommandError, ControlSettings, ObservePlanRequest, ObservePlanResult, OllamaHealth, OllamaModel, PetContext, PlanResult, VoiceModelInfo, VoiceSettings},
+    memory,
+    models::{AccessibilityObservation, ActiveApp, CommandError, ControlSettings, MemoryItem, ObservePlanRequest, ObservePlanResult, OllamaHealth, OllamaModel, PetContext, PlanResult, VoiceModelInfo, VoiceSettings},
     ollama,
     shortcuts,
     settings,
@@ -21,8 +22,8 @@ pub async fn ollama_models() -> Result<Vec<OllamaModel>, CommandError> {
 }
 
 #[tauri::command]
-pub async fn plan_pet_action(message: String, model: String, settings: ControlSettings, context: PetContext) -> Result<PlanResult, CommandError> {
-    llm::plan_pet_action(message, model, settings, context).await
+pub async fn plan_pet_action(app: AppHandle, message: String, model: String, settings: ControlSettings, context: PetContext) -> Result<PlanResult, CommandError> {
+    llm::plan_pet_action(app, message, model, settings, context).await
 }
 
 #[tauri::command]
@@ -48,6 +49,21 @@ pub fn accessibility_observation() -> Result<AccessibilityObservation, CommandEr
 #[tauri::command]
 pub async fn observe_and_plan(request: ObservePlanRequest) -> Result<ObservePlanResult, CommandError> {
     llm::observe_and_plan(request).await
+}
+
+#[tauri::command]
+pub fn memories(app: AppHandle) -> Result<Vec<MemoryItem>, CommandError> {
+    memory::list(&app)
+}
+
+#[tauri::command]
+pub fn delete_memory(app: AppHandle, id: String) -> Result<(), CommandError> {
+    memory::delete(&app, id)
+}
+
+#[tauri::command]
+pub fn clear_memories(app: AppHandle) -> Result<(), CommandError> {
+    memory::clear(&app)
 }
 
 #[tauri::command]

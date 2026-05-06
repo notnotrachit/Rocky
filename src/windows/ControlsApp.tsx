@@ -7,9 +7,12 @@ import {
   emitClickThrough,
   emitPetAction,
   emitPetScale,
+  clearMemories,
+  deleteMemory,
   downloadVoiceModel,
   getAccessibilityStatus,
   getControlSettings,
+  getMemories,
   getOllamaHealth,
   getOllamaModels,
   getPetScale,
@@ -23,9 +26,9 @@ import {
   setVoiceSettings,
   validateVoiceShortcut,
 } from "../lib/commands";
-import { defaultSettings, defaultVoiceSettings, idleAction, type AccessibilityObservation, type ActiveApp, type ControlSettings, type ControlTab, type OllamaModel, type PetAction, type PetAnimation, type RuntimeStatus, type VoiceDownloadProgress, type VoiceModelInfo, type VoiceSettings } from "../types";
+import { defaultSettings, defaultVoiceSettings, idleAction, type AccessibilityObservation, type ActiveApp, type ControlSettings, type ControlTab, type MemoryItem, type OllamaModel, type PetAction, type PetAnimation, type RuntimeStatus, type VoiceDownloadProgress, type VoiceModelInfo, type VoiceSettings } from "../types";
 
-const tabs: ControlTab[] = ["chat", "behavior", "voice", "privacy", "debug"];
+const tabs: ControlTab[] = ["chat", "behavior", "voice", "memory", "privacy", "debug"];
 const animations: PetAnimation[] = ["idle", "talk", "think", "inspect", "celebrate", "confused", "sleep", "wake"];
 
 export function ControlsApp() {
@@ -50,6 +53,8 @@ export function ControlsApp() {
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus>({ state: "idle", lastLatencyMs: null, lastError: null });
   const [shortcutDraft, setShortcutDraft] = useState(defaultVoiceSettings.pushToTalkShortcut);
   const [shortcutStatus, setShortcutStatus] = useState<string | null>(null);
+  const [memories, setMemories] = useState<MemoryItem[]>([]);
+  const [manualBusy, setManualBusy] = useState(false);
 
   useEffect(() => {
     getPetScale()
@@ -86,15 +91,21 @@ export function ControlsApp() {
     getVoiceModels()
       .then(setVoiceModels)
       .catch(() => setVoiceModels([]));
+
+    refreshMemories();
   }, []);
 
   useEffect(() => {
     const unlisten = listen<VoiceDownloadProgress>("voice-download-progress", (event) => {
       setVoiceDownloadProgress((current) => ({ ...current, [event.payload.modelId]: event.payload }));
     });
+    const unlistenManualBusy = listen<boolean>("rocky-manual-busy", (event) => {
+      setManualBusy(event.payload);
+    });
 
     return () => {
       unlisten.then((dispose) => dispose());
+      unlistenManualBusy.then((dispose) => dispose());
     };
   }, []);
 
@@ -111,8 +122,11 @@ export function ControlsApp() {
     if (!settings.observationEnabled) return;
 
     let cancelled = false;
+    let observationBusy = false;
 
     async function observeWithPlanner() {
+      if (observationBusy || manualBusy || runtimeStatus.state === "thinking") return;
+      observationBusy = true;
       try {
         const startedAt = performance.now();
         const result = await observeAndPlan({ settings, mood: action.mood, lastReactionKey });
@@ -131,6 +145,8 @@ export function ControlsApp() {
         if (!cancelled) {
           setRuntimeStatus((current) => ({ ...current, lastError: String(error) }));
         }
+      } finally {
+        observationBusy = false;
       }
     }
 
@@ -141,11 +157,27 @@ export function ControlsApp() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [action.mood, lastReactionKey, settings]);
+  }, [action.mood, lastReactionKey, manualBusy, runtimeStatus.state, settings]);
 
   async function updateSettings(nextSettings: ControlSettings) {
     setSettings(nextSettings);
     await setControlSettings(nextSettings);
+  }
+
+  async function refreshMemories() {
+    getMemories()
+      .then(setMemories)
+      .catch(() => setMemories([]));
+  }
+
+  async function removeMemory(id: string) {
+    await deleteMemory(id);
+    await refreshMemories();
+  }
+
+  async function removeAllMemories() {
+    await clearMemories();
+    await refreshMemories();
   }
 
   async function updateVoiceSettings(nextSettings: VoiceSettings) {
@@ -230,6 +262,7 @@ export function ControlsApp() {
         settings,
         context: { mood: action.mood, activeApp: summarizeObservation(activeApp, accessibilityObservation), idleSeconds: 0 },
       });
+      if (result.memoriesSaved.length > 0) refreshMemories();
       setOllamaReady(settings.provider === "ollama" ? true : ollamaReady);
       setRuntimeStatus({ state: "ready", lastLatencyMs: Math.round(performance.now() - startedAt), lastError: null });
       await sendAction(result.action);
@@ -251,7 +284,7 @@ export function ControlsApp() {
           <strong className={ollamaReady ? "text-emerald-300" : "text-amber-300"}>{ollamaReady ? "ollama ready" : ollamaReady === null ? "checking" : "offline"}</strong>
         </header>
 
-        <div className="grid grid-cols-5 gap-1 rounded-2xl border border-emerald-100/10 bg-black/25 p-1">
+        <div className="grid grid-cols-6 gap-1 rounded-2xl border border-emerald-100/10 bg-black/25 p-1">
           {tabs.map((item) => (
             <button key={item} className={`rounded-xl px-3 py-2 text-xs uppercase tracking-[0.08em] ${tab === item ? "bg-emerald-800/60" : "bg-transparent"}`} onClick={() => setTab(item)} type="button">
               {item}
@@ -284,6 +317,7 @@ export function ControlsApp() {
             </label>
             <ToggleRow label="quiet mode" checked={settings.quietMode} onChange={(quietMode) => updateSettings({ ...settings, quietMode })} />
             <ToggleRow label="observation" checked={settings.observationEnabled} onChange={(observationEnabled) => updateSettings({ ...settings, observationEnabled })} />
+            <ToggleRow label="memory" checked={settings.memoryEnabled} onChange={(memoryEnabled) => updateSettings({ ...settings, memoryEnabled })} />
             <ToggleRow label="launch at login" checked={settings.launchAtLogin} onChange={(launchAtLogin) => updateSettings({ ...settings, launchAtLogin })} />
           </section>
         )}
@@ -356,10 +390,51 @@ export function ControlsApp() {
           </section>
         )}
 
+        {tab === "memory" && (
+          <section className="grid gap-3">
+            <ToggleRow label="local memory" checked={settings.memoryEnabled} onChange={(memoryEnabled) => updateSettings({ ...settings, memoryEnabled })} />
+            <StatusGrid
+              rows={[
+                ["stored memories", String(memories.length)],
+                ["storage", "local JSON"],
+                ["provider sharing", settings.provider === "ollama" ? "local only" : "relevant memories sent in prompt"],
+              ]}
+            />
+            <div className="flex gap-2">
+              <button className="btn" type="button" onClick={refreshMemories}>
+                refresh
+              </button>
+              <button className="btn" type="button" onClick={removeAllMemories}>
+                clear all
+              </button>
+            </div>
+            <div className="grid gap-2">
+              {memories.length === 0 && <p className="rounded-2xl border border-emerald-100/10 bg-black/20 p-3 text-sm text-emerald-100/65">Rocky remembers nothing yet.</p>}
+              {memories.map((memory) => (
+                <article key={memory.id} className="grid gap-2 rounded-2xl border border-emerald-100/10 bg-black/20 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.16em] text-emerald-300">{memory.subject}</p>
+                      <strong className="text-sm">{memory.fact}</strong>
+                    </div>
+                    <button className="rounded-full border border-emerald-100/20 px-2 py-1 text-xs" type="button" onClick={() => removeMemory(memory.id)}>
+                      delete
+                    </button>
+                  </div>
+                  <p className="text-xs text-emerald-100/50">
+                    {memory.source} · {Math.round(memory.confidence * 100)}% confidence · {new Date(memory.createdAt).toLocaleString()}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
+
         {tab === "privacy" && (
           <section className="grid gap-3">
             <ToggleRow label="screen observation" checked={settings.observationEnabled} onChange={(observationEnabled) => updateSettings({ ...settings, observationEnabled })} />
             <ToggleRow label="quiet mode" checked={settings.quietMode} onChange={(quietMode) => updateSettings({ ...settings, quietMode })} />
+            <ToggleRow label="memory" checked={settings.memoryEnabled} onChange={(memoryEnabled) => updateSettings({ ...settings, memoryEnabled })} />
             <ToggleRow label="click-through pet" checked={clickThrough} onChange={toggleClickThrough} />
             <StatusGrid
               rows={[

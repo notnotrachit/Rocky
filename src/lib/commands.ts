@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AccessibilityObservation, ActiveApp, ControlSettings, ObservePlanResult, OllamaHealth, OllamaModel, PetAction, PetMood, PlanResult, VoiceModelInfo, VoiceSettings } from "../types";
+import type { AccessibilityObservation, ActiveApp, ControlSettings, MemoryItem, ObservePlanResult, OllamaHealth, OllamaModel, PetAction, PetMood, PlanResult, VoiceModelInfo, VoiceSettings } from "../types";
 
 export function getPetScale() {
   return invoke<number>("get_pet_scale");
@@ -47,6 +47,18 @@ export function getAccessibilityObservation() {
 
 export function observeAndPlan(input: { settings: ControlSettings; mood: PetMood; lastReactionKey: string | null }) {
   return invoke<ObservePlanResult>("observe_and_plan", { request: input });
+}
+
+export function getMemories() {
+  return invoke<MemoryItem[]>("memories");
+}
+
+export function deleteMemory(id: string) {
+  return invoke("delete_memory", { id });
+}
+
+export function clearMemories() {
+  return invoke("clear_memories");
 }
 
 export function getVoiceSettings() {

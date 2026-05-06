@@ -1,5 +1,5 @@
 import { FormEvent, PointerEvent, useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, Window } from "@tauri-apps/api/window";
 import RockyScene from "../RockyScene";
 import { SpeechBubble } from "../components/SpeechBubble";
@@ -93,6 +93,7 @@ export function PetApp() {
   async function sendMessage(trimmed: string) {
     setChatError(null);
     setChatBusy(true);
+    emit("rocky-manual-busy", true).catch(() => undefined);
     setChatLines((lines) => [...lines, { speaker: "human", text: trimmed }]);
     setAction({ mood: "focused", animation: "think", speech: "Rocky thinking. Tiny gears no, rocks yes.", durationMs: 12_000 });
 
@@ -117,6 +118,7 @@ export function PetApp() {
       setChatLines((lines) => [...lines, { speaker: "rocky", text: message }]);
     } finally {
       setChatBusy(false);
+      emit("rocky-manual-busy", false).catch(() => undefined);
     }
   }
 

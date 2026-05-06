@@ -78,6 +78,8 @@ pub struct OllamaTagsResponse {
 #[serde(rename_all = "camelCase")]
 pub struct PlanResult {
     pub action: PetAction,
+    pub memories_used: Vec<MemoryItem>,
+    pub memories_saved: Vec<MemoryItem>,
 }
 
 #[derive(Debug, Serialize)]
@@ -99,7 +101,7 @@ impl From<&str> for CommandError {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct ControlSettings {
     pub provider: String,
     pub model: String,
@@ -108,6 +110,7 @@ pub struct ControlSettings {
     pub observation_enabled: bool,
     pub quiet_mode: bool,
     pub launch_at_login: bool,
+    pub memory_enabled: bool,
 }
 
 impl Default for ControlSettings {
@@ -120,12 +123,40 @@ impl Default for ControlSettings {
             observation_enabled: false,
             quiet_mode: false,
             launch_at_login: false,
+            memory_enabled: true,
         }
     }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct MemoryItem {
+    pub id: String,
+    pub subject: String,
+    pub fact: String,
+    pub source: String,
+    pub confidence: f64,
+    pub created_at: u64,
+    pub last_used_at: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryCandidate {
+    pub subject: String,
+    pub fact: String,
+    pub confidence: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryExtraction {
+    pub should_remember: bool,
+    pub memories: Vec<MemoryCandidate>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(default, rename_all = "camelCase")]
 pub struct VoiceSettings {
     pub selected_model: String,
     pub push_to_talk_shortcut: String,
