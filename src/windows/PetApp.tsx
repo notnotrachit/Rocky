@@ -52,10 +52,11 @@ export function PetApp() {
   }, []);
 
   useEffect(() => {
+    if (chatBusy) return;
     if (action.animation === "idle") return;
     const timeout = window.setTimeout(() => setAction(idleAction), action.durationMs);
     return () => window.clearTimeout(timeout);
-  }, [action]);
+  }, [action, chatBusy]);
 
   useEffect(() => {
     chatBusyRef.current = chatBusy;
@@ -143,6 +144,7 @@ export function PetApp() {
     }
 
     voiceRecording.current = true;
+    emit("rocky-manual-busy", true).catch(() => undefined);
     setVoiceState("listening");
     if (options.openChat) {
       setChatOpen(true);
@@ -159,6 +161,7 @@ export function PetApp() {
       const transcript = (await stopVoiceRecordingAndTranscribe()).trim();
       if (!transcript) {
         setVoiceState("idle");
+        emit("rocky-manual-busy", false).catch(() => undefined);
         setAction({ mood: "confused", animation: "confused", speech: "Rocky hear silence. Try again, question?", durationMs: 9_000 });
         return;
       }
@@ -167,6 +170,7 @@ export function PetApp() {
       await sendMessage(transcript);
     } catch (error) {
       setChatError(String(error));
+      emit("rocky-manual-busy", false).catch(() => undefined);
       setAction({ mood: "confused", animation: "confused", speech: "Local ears not wired yet. Soon, question?", durationMs: 10_000 });
     } finally {
       setVoiceState("idle");

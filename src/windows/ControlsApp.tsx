@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Window } from "@tauri-apps/api/window";
 import { ProviderPanel } from "../components/ProviderPanel";
@@ -55,6 +55,7 @@ export function ControlsApp() {
   const [shortcutStatus, setShortcutStatus] = useState<string | null>(null);
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [manualBusy, setManualBusy] = useState(false);
+  const manualBusyRef = useRef(false);
 
   useEffect(() => {
     getPetScale()
@@ -100,6 +101,7 @@ export function ControlsApp() {
       setVoiceDownloadProgress((current) => ({ ...current, [event.payload.modelId]: event.payload }));
     });
     const unlistenManualBusy = listen<boolean>("rocky-manual-busy", (event) => {
+      manualBusyRef.current = event.payload;
       setManualBusy(event.payload);
     });
 
@@ -125,12 +127,12 @@ export function ControlsApp() {
     let observationBusy = false;
 
     async function observeWithPlanner() {
-      if (observationBusy || manualBusy || runtimeStatus.state === "thinking") return;
+      if (observationBusy || manualBusyRef.current || manualBusy || runtimeStatus.state === "thinking") return;
       observationBusy = true;
       try {
         const startedAt = performance.now();
         const result = await observeAndPlan({ settings, mood: action.mood, lastReactionKey });
-        if (cancelled) return;
+        if (cancelled || manualBusyRef.current) return;
 
         setAccessibilityObservation(result.observation);
         setAccessibilityGranted(result.observation.trusted);
