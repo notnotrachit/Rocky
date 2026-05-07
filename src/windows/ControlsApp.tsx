@@ -16,6 +16,7 @@ import {
   getOllamaHealth,
   getOllamaModels,
   getPetScale,
+  readScreenText,
   getVoiceModels,
   getVoiceSettings,
   observeAndPlan,
@@ -55,7 +56,14 @@ export function ControlsApp() {
   const [shortcutStatus, setShortcutStatus] = useState<string | null>(null);
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [manualBusy, setManualBusy] = useState(false);
+  const [ocrPreview, setOcrPreview] = useState("");
   const manualBusyRef = useRef(false);
+  const lastOcrObservationAt = useRef(0);
+  const lastOcrObservationText = useRef("");
+  const lastObservationActionAt = useRef(0);
+  const lastObservationSpeech = useRef("");
+  const lastObservationApp = useRef("");
+  const currentSpeechUntil = useRef(0);
 
   useEffect(() => {
     getPetScale()
@@ -131,6 +139,18 @@ export function ControlsApp() {
       observationBusy = true;
       try {
         const startedAt = performance.now();
+        const now = Date.now();
+        const intervalMs = Math.max(settings.ocrObservationIntervalMinutes || 15, 1) * 60_000;
+        let ocrContext = "";
+        if (settings.ocrObservationEnabled && now - lastOcrObservationAt.current >= intervalMs) {
+          lastOcrObservationAt.current = now;
+          const ocr = await readScreenText().catch(() => null);
+          const text = ocr?.text.trim() ?? "";
+          if (text && text !== lastOcrObservationText.current) {
+            lastOcrObservationText.current = text;
+            ocrContext = `\n\nSlow OCR screen text:\n${text.slice(0, 1500)}`;
+          }
+        }
         const result = await observeAndPlan({ settings, mood: action.mood, lastReactionKey });
         if (cancelled || manualBusyRef.current) return;
 
@@ -142,7 +162,23 @@ export function ControlsApp() {
         setRuntimeStatus((current) => ({ ...current, lastLatencyMs: Math.round(performance.now() - startedAt), lastError: null }));
 
         if (result.reactionKey) setLastReactionKey(result.reactionKey);
-        if (result.action) await sendAction(result.action);
+        if (Date.now() < currentSpeechUntil.current) return;
+
+        if (ocrContext) {
+          const ocrResult = await planPetAction({
+            message: `Occasional screen OCR observation. React only if useful; otherwise idle.${ocrContext}`,
+            model: settings.model,
+            settings: { ...settings, memoryEnabled: false },
+            context: { mood: action.mood, activeApp: summarizeObservation(result.observation.activeApp, result.observation), idleSeconds: 0 },
+          });
+          if (!cancelled && !manualBusyRef.current && shouldApplyObservationAction(ocrResult.action, result.sanitizedContext, result.observation.activeApp?.name)) {
+            await sendAction(ocrResult.action);
+          }
+        } else if (result.action) {
+          if (shouldApplyObservationAction(result.action, result.sanitizedContext, result.observation.activeApp?.name)) {
+            await sendAction(result.action);
+          }
+        }
       } catch (error) {
         if (!cancelled) {
           setRuntimeStatus((current) => ({ ...current, lastError: String(error) }));
@@ -220,6 +256,7 @@ export function ControlsApp() {
 
   async function sendAction(nextAction: PetAction) {
     setAction(nextAction);
+    currentSpeechUntil.current = Date.now() + nextAction.durationMs;
     await emitPetAction(nextAction);
   }
 
@@ -244,6 +281,17 @@ export function ControlsApp() {
         ...current,
         lastError: "Accessibility prompt opened. If Rocky is still not trusted, enable it in System Settings > Privacy & Security > Accessibility.",
       }));
+    }
+  }
+
+  async function testOcr() {
+    setRuntimeStatus((current) => ({ ...current, state: "thinking", lastError: null }));
+    try {
+      const result = await readScreenText();
+      setOcrPreview(result.text || "No text detected.");
+      setRuntimeStatus((current) => ({ ...current, state: "ready", lastError: null }));
+    } catch (error) {
+      setRuntimeStatus((current) => ({ ...current, state: "error", lastError: String(error) }));
     }
   }
 
@@ -273,6 +321,26 @@ export function ControlsApp() {
       setRuntimeStatus({ state: "error", lastLatencyMs: Math.round(performance.now() - startedAt), lastError: String(error) });
       await sendAction({ mood: "confused", animation: "confused", speech: "Configured brain did not answer.", durationMs: 9000 });
     }
+  }
+
+  function shouldApplyObservationAction(nextAction: PetAction, context: string, appName?: string) {
+    const now = Date.now();
+    const speech = nextAction.speech.trim().toLowerCase();
+    const app = appName ?? "unknown";
+    const globalCooldownMs = 90_000;
+    const sameAppCooldownMs = 180_000;
+
+    if (nextAction.animation === "idle") return false;
+    if (speech.length < 8) return false;
+    if (now - lastObservationActionAt.current < globalCooldownMs) return false;
+    if (app === lastObservationApp.current && now - lastObservationActionAt.current < sameAppCooldownMs) return false;
+    if (speech === lastObservationSpeech.current) return false;
+    if (observationInterestScore(context, nextAction) < 2) return false;
+
+    lastObservationActionAt.current = now;
+    lastObservationSpeech.current = speech;
+    lastObservationApp.current = app;
+    return true;
   }
 
   return (
@@ -320,6 +388,13 @@ export function ControlsApp() {
             <ToggleRow label="quiet mode" checked={settings.quietMode} onChange={(quietMode) => updateSettings({ ...settings, quietMode })} />
             <ToggleRow label="observation" checked={settings.observationEnabled} onChange={(observationEnabled) => updateSettings({ ...settings, observationEnabled })} />
             <ToggleRow label="memory" checked={settings.memoryEnabled} onChange={(memoryEnabled) => updateSettings({ ...settings, memoryEnabled })} />
+            <ToggleRow label="OCR screen reading" checked={settings.ocrEnabled} onChange={(ocrEnabled) => updateSettings({ ...settings, ocrEnabled })} />
+            <ToggleRow label="slow OCR observation" checked={settings.ocrObservationEnabled} onChange={(ocrObservationEnabled) => updateSettings({ ...settings, ocrObservationEnabled })} />
+            <label className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-2xl border border-emerald-100/10 bg-black/20 p-3">
+              <span className="field-label">OCR interval</span>
+              <input className="accent-emerald-300" type="range" min="10" max="60" step="5" value={settings.ocrObservationIntervalMinutes} onChange={(event) => updateSettings({ ...settings, ocrObservationIntervalMinutes: Number(event.target.value) })} />
+              <strong>{settings.ocrObservationIntervalMinutes} min</strong>
+            </label>
             <ToggleRow label="launch at login" checked={settings.launchAtLogin} onChange={(launchAtLogin) => updateSettings({ ...settings, launchAtLogin })} />
           </section>
         )}
@@ -437,7 +512,12 @@ export function ControlsApp() {
             <ToggleRow label="screen observation" checked={settings.observationEnabled} onChange={(observationEnabled) => updateSettings({ ...settings, observationEnabled })} />
             <ToggleRow label="quiet mode" checked={settings.quietMode} onChange={(quietMode) => updateSettings({ ...settings, quietMode })} />
             <ToggleRow label="memory" checked={settings.memoryEnabled} onChange={(memoryEnabled) => updateSettings({ ...settings, memoryEnabled })} />
+            <ToggleRow label="OCR screen reading" checked={settings.ocrEnabled} onChange={(ocrEnabled) => updateSettings({ ...settings, ocrEnabled })} />
+            <ToggleRow label="slow OCR observation" checked={settings.ocrObservationEnabled} onChange={(ocrObservationEnabled) => updateSettings({ ...settings, ocrObservationEnabled })} />
             <ToggleRow label="click-through pet" checked={clickThrough} onChange={toggleClickThrough} />
+            <div className="rounded-2xl border border-amber-300/30 bg-amber-950/20 p-3 text-sm text-amber-100">
+              OCR warning: when enabled and triggered, Rocky captures the visible screen locally and sends extracted text to the configured LLM provider. Slow OCR observation does this in the background every configured interval. No sanitization is applied yet.
+            </div>
             <StatusGrid
               rows={[
                 ["provider", settings.provider],
@@ -446,9 +526,15 @@ export function ControlsApp() {
                 ["window title", accessibilityObservation?.windowTitle ?? "unavailable"],
                 ["focused role", accessibilityObservation?.focusedRole ?? "unavailable"],
                 ["accessibility", accessibilityGranted === null ? "checking" : accessibilityGranted ? "granted" : "not granted"],
+                ["manual OCR", settings.ocrEnabled ? "enabled" : "disabled"],
+                ["slow OCR observation", settings.ocrObservationEnabled ? `${settings.ocrObservationIntervalMinutes} min` : "disabled"],
                 ["planner skip", lastObservationSkip ?? "none"],
               ]}
             />
+            <button className="btn" type="button" onClick={testOcr}>
+              test OCR screen read
+            </button>
+            {ocrPreview && <pre className="max-h-40 overflow-auto rounded-2xl border border-emerald-100/10 bg-black/25 p-3 text-xs text-emerald-100 whitespace-pre-wrap">{ocrPreview}</pre>}
             <button className="btn" type="button" onClick={grantAccessibility}>
               {accessibilityGranted ? "accessibility granted" : "grant accessibility permission"}
             </button>
@@ -517,6 +603,58 @@ function summarizeObservation(activeApp: ActiveApp | null, observation: Accessib
   if (observation?.selectedText) parts.push(`selected text: ${observation.selectedText}`);
 
   return parts.join("; ");
+}
+
+function observationInterestScore(context: string, action: PetAction) {
+  const lower = `${context}\n${action.speech}`.toLowerCase();
+  let score = 0;
+  const strongTerms = [
+    "error",
+    "failed",
+    "warning",
+    "crash",
+    "permission",
+    "denied",
+    "urgent",
+    "deadline",
+    "overdue",
+    "meeting now",
+    "low battery",
+    "not responding",
+    "cannot",
+    "problem",
+  ];
+  const mediumTerms = [
+    "calendar",
+    "meeting",
+    "email",
+    "message",
+    "document",
+    "notes",
+    "task",
+    "todo",
+    "shopping",
+    "recipe",
+    "travel",
+    "map",
+    "weather",
+    "music",
+    "video",
+    "photo",
+    "learning",
+    "research",
+    "design",
+    "code",
+    "terminal",
+    "browser",
+  ];
+
+  for (const term of strongTerms) if (lower.includes(term)) score += 2;
+  for (const term of mediumTerms) if (lower.includes(term)) score += 1;
+  if (action.mood === "focused" || action.mood === "confused" || action.mood === "excited") score += 1;
+  if (lower.includes("active app:")) score += 1;
+
+  return score;
 }
 
 function StatusGrid({ rows }: { rows: [string, string][] }) {

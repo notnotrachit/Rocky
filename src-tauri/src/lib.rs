@@ -28,6 +28,7 @@ pub fn run() {
             commands::accessibility_status,
             commands::request_accessibility_permission,
             commands::accessibility_observation,
+            commands::read_screen_text,
             commands::observe_and_plan,
             commands::memories,
             commands::delete_memory,

@@ -43,6 +43,13 @@ pub struct AccessibilityObservation {
     pub selected_text: Option<String>,
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct OcrResult {
+    pub text: String,
+    pub source: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ObservePlanRequest {
@@ -111,6 +118,9 @@ pub struct ControlSettings {
     pub quiet_mode: bool,
     pub launch_at_login: bool,
     pub memory_enabled: bool,
+    pub ocr_enabled: bool,
+    pub ocr_observation_enabled: bool,
+    pub ocr_observation_interval_minutes: u32,
 }
 
 impl Default for ControlSettings {
@@ -124,6 +134,9 @@ impl Default for ControlSettings {
             quiet_mode: false,
             launch_at_login: false,
             memory_enabled: true,
+            ocr_enabled: false,
+            ocr_observation_enabled: false,
+            ocr_observation_interval_minutes: 15,
         }
     }
 }

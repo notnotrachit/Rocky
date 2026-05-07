@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AccessibilityObservation, ActiveApp, ControlSettings, MemoryItem, ObservePlanResult, OllamaHealth, OllamaModel, PetAction, PetMood, PlanResult, VoiceModelInfo, VoiceSettings } from "../types";
+import type { AccessibilityObservation, ActiveApp, ControlSettings, MemoryItem, ObservePlanResult, OcrResult, OllamaHealth, OllamaModel, PetAction, PetMood, PlanResult, VoiceModelInfo, VoiceSettings } from "../types";
 
 export function getPetScale() {
   return invoke<number>("get_pet_scale");
@@ -43,6 +43,10 @@ export function requestAccessibilityPermission() {
 
 export function getAccessibilityObservation() {
   return invoke<AccessibilityObservation>("accessibility_observation");
+}
+
+export function readScreenText() {
+  return invoke<OcrResult>("read_screen_text");
 }
 
 export function observeAndPlan(input: { settings: ControlSettings; mood: PetMood; lastReactionKey: string | null }) {

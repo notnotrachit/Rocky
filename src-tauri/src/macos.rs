@@ -1,4 +1,6 @@
-use crate::models::{AccessibilityObservation, ActiveApp, CommandError};
+use crate::models::{AccessibilityObservation, ActiveApp, CommandError, OcrResult};
+
+use std::{fs, process::Command};
 
 #[cfg(target_os = "macos")]
 use core::{ffi::c_void, ptr};
@@ -131,6 +133,79 @@ pub fn accessibility_observation() -> Result<AccessibilityObservation, CommandEr
 }
 
 #[cfg(target_os = "macos")]
+pub fn read_screen_text() -> Result<OcrResult, CommandError> {
+    let mut screenshot_path = std::env::temp_dir();
+    screenshot_path.push(format!("rocky-ocr-{}.png", std::process::id()));
+
+    let screenshot_status = Command::new("/usr/sbin/screencapture")
+        .arg("-x")
+        .arg(&screenshot_path)
+        .status()
+        .map_err(|error| CommandError::from(format!("Could not start screencapture: {error}")))?;
+
+    if !screenshot_status.success() {
+        return Err(CommandError::from(
+            "Could not capture screen. macOS may require Screen Recording permission for Rocky.",
+        ));
+    }
+
+    let swift_script = format!(
+        r#"
+import Foundation
+import Vision
+import AppKit
+
+let imagePath = "{}"
+guard let image = NSImage(contentsOfFile: imagePath),
+      let tiff = image.tiffRepresentation,
+      let bitmap = NSBitmapImageRep(data: tiff),
+      let cgImage = bitmap.cgImage else {{
+  FileHandle.standardError.write(Data("Could not load screenshot\n".utf8))
+  exit(2)
+}}
+
+let request = VNRecognizeTextRequest()
+request.recognitionLevel = .accurate
+request.usesLanguageCorrection = true
+request.recognitionLanguages = ["en-US"]
+
+let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+try handler.perform([request])
+
+let text = (request.results ?? [])
+  .compactMap {{ $0.topCandidates(1).first?.string }}
+  .joined(separator: "\n")
+print(text)
+"#,
+        screenshot_path.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"")
+    );
+
+    let mut script_path = std::env::temp_dir();
+    script_path.push(format!("rocky-ocr-{}.swift", std::process::id()));
+    fs::write(&script_path, swift_script)
+        .map_err(|error| CommandError::from(format!("Could not write OCR script: {error}")))?;
+
+    let output = Command::new("/usr/bin/swift")
+        .arg(&script_path)
+        .output()
+        .map_err(|error| CommandError::from(format!("Could not run Apple Vision OCR: {error}")))?;
+
+    let _ = fs::remove_file(&screenshot_path);
+    let _ = fs::remove_file(&script_path);
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(CommandError::from(format!("Apple Vision OCR failed: {stderr}")));
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok(OcrResult {
+        text: cap_text(&text, 4_000),
+        source: "macOS screen capture + Apple Vision".to_string(),
+    })
+}
+
+#[cfg(target_os = "macos")]
 unsafe fn copy_ax_element_attribute(element: AXUIElementRef, attribute: CFStringRef) -> Option<AXUIElementRef> {
     let mut value: CFTypeRef = ptr::null();
     if AXUIElementCopyAttributeValue(element, attribute, &mut value) != 0 || value.is_null() {
@@ -196,4 +271,9 @@ pub fn accessibility_observation() -> Result<AccessibilityObservation, CommandEr
         focused_value: None,
         selected_text: None,
     })
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn read_screen_text() -> Result<OcrResult, CommandError> {
+    Err(CommandError::from("OCR is only implemented for macOS"))
 }

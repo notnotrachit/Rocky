@@ -3,7 +3,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, Window } from "@tauri-apps/api/window";
 import RockyScene from "../RockyScene";
 import { SpeechBubble } from "../components/SpeechBubble";
-import { getAccessibilityObservation, getControlSettings, getPetScale, planPetAction, startVoiceRecording, stopVoiceRecordingAndTranscribe } from "../lib/commands";
+import { getAccessibilityObservation, getControlSettings, getPetScale, planPetAction, readScreenText, startVoiceRecording, stopVoiceRecordingAndTranscribe } from "../lib/commands";
 import { defaultSettings, idleAction, type AccessibilityObservation, type ActiveApp, type PetAction } from "../types";
 
 type ChatLine = {
@@ -103,8 +103,14 @@ export function PetApp() {
         getControlSettings().then((saved) => ({ ...defaultSettings, ...saved })),
         getAccessibilityObservation().catch(() => null),
       ]);
+      const ocrText = settings.ocrEnabled && shouldReadScreen(trimmed)
+        ? await readScreenText()
+            .then((result) => result.text.trim())
+            .catch((error) => `OCR failed: ${String(error)}`)
+        : "";
+      const message = ocrText ? `${trimmed}\n\nVisible screen OCR text:\n${ocrText}` : trimmed;
       const result = await planPetAction({
-        message: trimmed,
+        message,
         model: settings.model,
         settings,
         context: { mood: action.mood, activeApp: summarizeObservation(observation), idleSeconds: 0 },
@@ -276,4 +282,9 @@ function summarizeObservation(observation: AccessibilityObservation | null) {
   if (observation?.selectedText) parts.push(`selected text: ${observation.selectedText}`);
 
   return parts.join("; ");
+}
+
+function shouldReadScreen(message: string) {
+  const lower = message.toLowerCase();
+  return lower.includes("read screen") || lower.includes("read my screen") || lower.includes("ocr") || lower.includes("what is on my screen") || lower.includes("what's on my screen");
 }

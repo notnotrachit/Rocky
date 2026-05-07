@@ -33,6 +33,11 @@ export type AccessibilityObservation = {
   selectedText: string | null;
 };
 
+export type OcrResult = {
+  text: string;
+  source: string;
+};
+
 export type OllamaModel = {
   name: string;
   modifiedAt?: string;
@@ -62,6 +67,9 @@ export type ControlSettings = {
   quietMode: boolean;
   launchAtLogin: boolean;
   memoryEnabled: boolean;
+  ocrEnabled: boolean;
+  ocrObservationEnabled: boolean;
+  ocrObservationIntervalMinutes: number;
 };
 
 export type MemoryItem = {
@@ -123,6 +131,9 @@ export const defaultSettings: ControlSettings = {
   quietMode: false,
   launchAtLogin: false,
   memoryEnabled: true,
+  ocrEnabled: false,
+  ocrObservationEnabled: false,
+  ocrObservationIntervalMinutes: 15,
 };
 
 export const defaultVoiceSettings: VoiceSettings = {

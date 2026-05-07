@@ -4,7 +4,7 @@ use crate::{
     llm,
     macos,
     memory,
-    models::{AccessibilityObservation, ActiveApp, CommandError, ControlSettings, MemoryItem, ObservePlanRequest, ObservePlanResult, OllamaHealth, OllamaModel, PetContext, PlanResult, VoiceModelInfo, VoiceSettings},
+    models::{AccessibilityObservation, ActiveApp, CommandError, ControlSettings, MemoryItem, ObservePlanRequest, ObservePlanResult, OcrResult, OllamaHealth, OllamaModel, PetContext, PlanResult, VoiceModelInfo, VoiceSettings},
     ollama,
     shortcuts,
     settings,
@@ -44,6 +44,11 @@ pub fn request_accessibility_permission() -> bool {
 #[tauri::command]
 pub fn accessibility_observation() -> Result<AccessibilityObservation, CommandError> {
     macos::accessibility_observation()
+}
+
+#[tauri::command]
+pub fn read_screen_text() -> Result<OcrResult, CommandError> {
+    macos::read_screen_text()
 }
 
 #[tauri::command]
