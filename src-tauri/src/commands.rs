@@ -119,8 +119,8 @@ pub fn validate_voice_shortcut(shortcut: String) -> Result<(), CommandError> {
 }
 
 #[tauri::command]
-pub fn start_voice_recording() -> Result<(), CommandError> {
-    voice::start_recording()
+pub fn start_voice_recording(app: AppHandle) -> Result<(), CommandError> {
+    voice::start_recording(app)
 }
 
 #[tauri::command]

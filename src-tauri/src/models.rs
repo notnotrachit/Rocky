@@ -211,6 +211,12 @@ pub struct VoiceDownloadProgress {
     pub done: bool,
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceLevel {
+    pub level: f32,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SavedPetPosition {
     pub x: i32,

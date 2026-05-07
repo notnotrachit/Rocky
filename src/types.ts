@@ -109,6 +109,10 @@ export type VoiceDownloadProgress = {
   done: boolean;
 };
 
+export type VoiceLevel = {
+  level: number;
+};
+
 export type RuntimeStatus = {
   state: "idle" | "thinking" | "ready" | "offline" | "error";
   lastLatencyMs: number | null;

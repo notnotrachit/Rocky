@@ -4,7 +4,7 @@ import { getCurrentWindow, Window } from "@tauri-apps/api/window";
 import RockyScene from "../RockyScene";
 import { SpeechBubble } from "../components/SpeechBubble";
 import { getAccessibilityObservation, getControlSettings, getPetScale, planPetAction, readScreenText, startVoiceRecording, stopVoiceRecordingAndTranscribe } from "../lib/commands";
-import { defaultSettings, idleAction, type AccessibilityObservation, type ActiveApp, type PetAction } from "../types";
+import { defaultSettings, idleAction, type AccessibilityObservation, type ActiveApp, type PetAction, type VoiceLevel } from "../types";
 
 type ChatLine = {
   speaker: "human" | "rocky";
@@ -25,6 +25,7 @@ export function PetApp() {
   const [chatBusy, setChatBusy] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
+  const [voiceLevel, setVoiceLevel] = useState(0);
   const pointerDownAt = useRef<{ x: number; y: number; time: number } | null>(null);
   const voiceRecording = useRef(false);
   const chatBusyRef = useRef(false);
@@ -41,6 +42,9 @@ export function PetApp() {
     const unlistenVoiceStop = listen("voice-shortcut-stop", () => {
       stopVoice();
     });
+    const unlistenVoiceLevel = listen<VoiceLevel>("voice-level", (event) => {
+      setVoiceLevel(event.payload.level);
+    });
 
     return () => {
       unlistenAction.then((dispose) => dispose());
@@ -48,6 +52,7 @@ export function PetApp() {
       unlistenScale.then((dispose) => dispose());
       unlistenVoiceStart.then((dispose) => dispose());
       unlistenVoiceStop.then((dispose) => dispose());
+      unlistenVoiceLevel.then((dispose) => dispose());
     };
   }, []);
 
@@ -180,6 +185,7 @@ export function PetApp() {
       setAction({ mood: "confused", animation: "confused", speech: "Local ears not wired yet. Soon, question?", durationMs: 10_000 });
     } finally {
       setVoiceState("idle");
+      setVoiceLevel(0);
     }
   }
 
@@ -200,6 +206,7 @@ export function PetApp() {
         rocky.sys
       </button>
       <div className="absolute inset-x-0 h-[300px]" style={{ bottom: rockyBottom, transform: `scale(${petScale})`, transformOrigin: "50% 100%" }}>
+        {voiceState === "listening" && <VoiceAura level={voiceLevel} />}
         <RockyScene animation={action.animation} interactive={false} />
       </div>
       <button
@@ -268,6 +275,22 @@ export function PetApp() {
         </section>
       )}
     </main>
+  );
+}
+
+function VoiceAura({ level }: { level: number }) {
+  const bars = [0.35, 0.55, 0.8, 0.6, 0.42];
+
+  return (
+    <div className="pointer-events-none absolute left-1/2 top-8 z-0 flex -translate-x-1/2 items-end gap-2 opacity-80">
+      {bars.map((base, index) => (
+        <span
+          key={index}
+          className="w-2 rounded-full bg-emerald-200/55 shadow-[0_0_18px_rgba(110,255,190,0.45)] transition-all duration-75"
+          style={{ height: `${18 + (base + level) * 58}px`, opacity: 0.25 + Math.min(0.65, level + base * 0.35) }}
+        />
+      ))}
+    </div>
   );
 }
 
