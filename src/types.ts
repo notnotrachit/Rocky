@@ -7,6 +7,12 @@ export type PetAction = {
   animation: PetAnimation;
   speech: string;
   durationMs: number;
+  toolCalls?: PetToolCall[];
+};
+
+export type PetToolCall = {
+  name: "openControls" | "showMemory" | "triggerOcr" | "toggleQuietMode" | "setPetScale";
+  argument?: string | null;
 };
 
 export type Provider = "ollama" | "openai" | "anthropic" | "google";

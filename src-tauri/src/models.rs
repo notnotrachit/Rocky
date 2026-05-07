@@ -15,6 +15,15 @@ pub struct PetAction {
     pub animation: String,
     pub speech: String,
     pub duration_ms: u32,
+    #[serde(default)]
+    pub tool_calls: Vec<PetToolCall>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PetToolCall {
+    pub name: String,
+    pub argument: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -224,13 +233,25 @@ pub struct SavedPetPosition {
 }
 
 #[derive(Debug, Serialize)]
-pub struct GenerateRequest {
+pub struct ChatRequest {
     pub model: String,
-    pub prompt: String,
+    pub messages: Vec<ChatMessage>,
+    pub think: bool,
     pub stream: bool,
 }
 
+#[derive(Debug, Serialize)]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
 #[derive(Debug, Deserialize)]
-pub struct GenerateResponse {
-    pub response: String,
+pub struct ChatResponse {
+    pub message: ChatResponseMessage,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChatResponseMessage {
+    pub content: String,
 }

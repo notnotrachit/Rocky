@@ -11,9 +11,9 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use futures_util::StreamExt;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::AsyncWriteExt;
-use transcribe_rs::{whisper_cpp::{WhisperEngine, WhisperInferenceParams}, SpeechModel};
+use transcribe_rs::{whisper_cpp::{WhisperEngine, WhisperInferenceParams}};
 
-use crate::models::{CommandError, VoiceDownloadProgress, VoiceModelInfo};
+use crate::models::{CommandError, VoiceDownloadProgress, VoiceLevel, VoiceModelInfo};
 use crate::settings;
 
 struct VoiceModelDef {
@@ -152,7 +152,7 @@ pub async fn download_model(app: AppHandle, model_id: String) -> Result<VoiceMod
     model_info(&app, model)
 }
 
-pub fn start_recording() -> Result<(), CommandError> {
+pub fn start_recording(app: AppHandle) -> Result<(), CommandError> {
     let mut slot = recording_slot()
         .lock()
         .map_err(|_| CommandError::from("Could not lock voice recorder state"))?;
@@ -166,7 +166,7 @@ pub fn start_recording() -> Result<(), CommandError> {
     let (result_tx, result_rx) = mpsc::channel::<Result<Vec<f32>, String>>();
 
     thread::spawn(move || {
-        let result = run_recording_thread(stop_rx, ready_tx);
+        let result = run_recording_thread(app, stop_rx, ready_tx);
         let _ = result_tx.send(result);
     });
 
@@ -204,19 +204,59 @@ pub async fn stop_recording_and_transcribe(_app: AppHandle) -> Result<String, Co
     let sample_rate = session.sample_rate;
     let audio_seconds = samples.len() as f64 / sample_rate as f64;
 
-    if samples.is_empty() || elapsed.as_millis() < 250 {
+    if samples.is_empty() || elapsed.as_millis() < 850 || audio_seconds < 0.75 {
         return Err(CommandError::from("Rocky heard no audio. Hold voice a little longer, question?"));
+    }
+
+    let stats = audio_stats(&samples);
+    if !stats.has_voice {
+        return Err(CommandError::from("Rocky heard silence. No words to decode, question?"));
     }
 
     transcribe_whisper(&_app, samples, sample_rate)
         .map(|text| text.trim().to_string())
         .and_then(|text| {
-            if text.is_empty() {
+            if text.is_empty() || is_likely_silence_hallucination(&text) {
                 Err(CommandError::from(format!("Rocky heard {audio_seconds:.1}s, but transcription returned empty text.")))
             } else {
                 Ok(text)
             }
         })
+}
+
+struct AudioStats {
+    has_voice: bool,
+}
+
+fn audio_stats(samples: &[f32]) -> AudioStats {
+    if samples.is_empty() {
+        return AudioStats { has_voice: false };
+    }
+
+    let rms = (samples.iter().map(|sample| sample * sample).sum::<f32>() / samples.len() as f32).sqrt();
+    let peak = samples.iter().fold(0.0_f32, |max, sample| max.max(sample.abs()));
+    let active_ratio = samples.iter().filter(|sample| sample.abs() > 0.012).count() as f32 / samples.len() as f32;
+
+    AudioStats {
+        has_voice: rms > 0.006 && peak > 0.035 && active_ratio > 0.015,
+    }
+}
+
+fn is_likely_silence_hallucination(text: &str) -> bool {
+    let normalized = text.trim().trim_matches(|character: char| character.is_ascii_punctuation()).to_lowercase();
+    matches!(
+        normalized.as_str(),
+        "thank you"
+            | "thanks"
+            | "i'm rocky thank you"
+            | "im rocky thank you"
+            | "i am rocky thank you"
+            | "you"
+            | "bye"
+            | "hello"
+            | "okay"
+            | "ok"
+    )
 }
 
 fn model_info(app: &AppHandle, model: &VoiceModelDef) -> Result<VoiceModelInfo, CommandError> {
@@ -357,6 +397,7 @@ fn recording_slot() -> &'static Mutex<Option<RecordingSession>> {
 }
 
 fn run_recording_thread(
+    app: AppHandle,
     stop_rx: mpsc::Receiver<()>,
     ready_tx: mpsc::Sender<Result<u32, String>>,
 ) -> Result<Vec<f32>, String> {
@@ -372,6 +413,7 @@ fn run_recording_thread(
     let sample_rate = config.sample_rate.0;
     let channels = usize::from(config.channels.max(1));
     let samples = Arc::new(Mutex::new(Vec::<f32>::with_capacity(sample_rate as usize * 8)));
+    let last_level_emit = Arc::new(Mutex::new(Instant::now()));
 
     let stream = match sample_format {
         cpal::SampleFormat::F32 => build_input_stream::<f32, _>(
@@ -379,13 +421,15 @@ fn run_recording_thread(
             &config,
             channels,
             Arc::clone(&samples),
+            Arc::clone(&last_level_emit),
+            app.clone(),
             |error| eprintln!("Rocky voice input stream error: {error}"),
             |sample| sample,
         ),
-        cpal::SampleFormat::I16 => build_input_stream::<i16, _>(&device, &config, channels, Arc::clone(&samples), |error| eprintln!("Rocky voice input stream error: {error}"), |sample| {
+        cpal::SampleFormat::I16 => build_input_stream::<i16, _>(&device, &config, channels, Arc::clone(&samples), Arc::clone(&last_level_emit), app.clone(), |error| eprintln!("Rocky voice input stream error: {error}"), |sample| {
             sample as f32 / i16::MAX as f32
         }),
-        cpal::SampleFormat::U16 => build_input_stream::<u16, _>(&device, &config, channels, Arc::clone(&samples), |error| eprintln!("Rocky voice input stream error: {error}"), |sample| {
+        cpal::SampleFormat::U16 => build_input_stream::<u16, _>(&device, &config, channels, Arc::clone(&samples), Arc::clone(&last_level_emit), app.clone(), |error| eprintln!("Rocky voice input stream error: {error}"), |sample| {
             (sample as f32 / u16::MAX as f32) * 2.0 - 1.0
         }),
         _ => Err(cpal::BuildStreamError::StreamConfigNotSupported),
@@ -411,6 +455,8 @@ fn build_input_stream<T, F>(
     config: &cpal::StreamConfig,
     channels: usize,
     samples: Arc<Mutex<Vec<f32>>>,
+    last_level_emit: Arc<Mutex<Instant>>,
+    app: AppHandle,
     error_callback: impl FnMut(cpal::StreamError) + Send + 'static,
     convert: F,
 ) -> Result<cpal::Stream, cpal::BuildStreamError>
@@ -425,9 +471,26 @@ where
                 return;
             };
 
+            let mut rms_sum = 0.0_f32;
+            let mut rms_count = 0_usize;
             for frame in input.chunks(channels) {
                 let sum = frame.iter().copied().map(&convert).sum::<f32>();
-                buffer.push((sum / frame.len().max(1) as f32).clamp(-1.0, 1.0));
+                let sample = (sum / frame.len().max(1) as f32).clamp(-1.0, 1.0);
+                rms_sum += sample * sample;
+                rms_count += 1;
+                buffer.push(sample);
+            }
+
+            if rms_count > 0 {
+                let Ok(mut last_emit) = last_level_emit.lock() else {
+                    return;
+                };
+                if last_emit.elapsed().as_millis() >= 50 {
+                    *last_emit = Instant::now();
+                    let rms = (rms_sum / rms_count as f32).sqrt();
+                    let level = (rms * 5.0).clamp(0.0, 1.0);
+                    let _ = app.emit("voice-level", VoiceLevel { level });
+                }
             }
         },
         error_callback,

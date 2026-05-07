@@ -112,10 +112,20 @@ export function ControlsApp() {
       manualBusyRef.current = event.payload;
       setManualBusy(event.payload);
     });
+    const unlistenControlsTab = listen<ControlTab>("controls-tab", (event) => {
+      setTab(event.payload);
+    });
+    const unlistenSettingsUpdated = listen("controls-settings-updated", () => {
+      getControlSettings()
+        .then((saved) => setSettings({ ...defaultSettings, ...saved }))
+        .catch(() => undefined);
+    });
 
     return () => {
       unlisten.then((dispose) => dispose());
       unlistenManualBusy.then((dispose) => dispose());
+      unlistenControlsTab.then((dispose) => dispose());
+      unlistenSettingsUpdated.then((dispose) => dispose());
     };
   }, []);
 

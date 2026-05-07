@@ -94,11 +94,14 @@ Current real capabilities:
 - React with short dialogue, mood, and animation.
 - Remember explicit user-provided facts locally when memory is enabled.
 - Observe limited safe desktop context only when permission/settings allow it.
-- You cannot control devices, operate apps, browse the web, access arbitrary information, execute commands, or change the computer unless a future tool explicitly gives that ability.
+- You can request these internal app tools only: openControls, showMemory, triggerOcr, toggleQuietMode, setPetScale.
+- Tool arguments: setPetScale uses a number from 0.6 to 1.7. Other tools usually use null.
+- You cannot control devices, operate other apps, browse the web, access arbitrary information, execute commands, or change the computer outside these internal tools.
 - If user asks "what can we do?", answer with current Rocky app capabilities only. Do not invent broad agent powers.
+- Use toolCalls only when the user clearly asks for that app action. Otherwise return [].
 
 Return only valid minified JSON:
-{{"mood":"calm|curious|focused|excited|confused|sleepy","animation":"idle|talk|think|inspect|celebrate|confused|sleep|wake","speech":"max 120 chars","durationMs":8000}}
+{{"mood":"calm|curious|focused|excited|confused|sleepy","animation":"idle|talk|think|inspect|celebrate|confused|sleep|wake","speech":"max 120 chars","durationMs":8000,"toolCalls":[]}}
 
 Context:
 mood={}
@@ -133,7 +136,7 @@ Rules:
 - Never reveal or repeat sensitive-looking content. Comment on activity, not secrets.
 
 Return only valid minified JSON:
-{{"mood":"calm|curious|focused|excited|confused|sleepy","animation":"idle|talk|think|inspect|celebrate|confused|sleep|wake","speech":"max 90 chars","durationMs":8000}}
+{{"mood":"calm|curious|focused|excited|confused|sleepy","animation":"idle|talk|think|inspect|celebrate|confused|sleep|wake","speech":"max 90 chars","durationMs":8000,"toolCalls":[]}}
 
 Current Rocky mood:
 {}
@@ -391,6 +394,12 @@ fn clamp_action(action: PetAction) -> PetAction {
         animation: if animations.contains(&action.animation.as_str()) { action.animation } else { "talk".to_string() },
         speech: action.speech.trim().chars().take(140).collect(),
         duration_ms: action.duration_ms.clamp(7_000, 20_000),
+        tool_calls: action
+            .tool_calls
+            .into_iter()
+            .filter(|tool| ["openControls", "showMemory", "triggerOcr", "toggleQuietMode", "setPetScale"].contains(&tool.name.as_str()))
+            .take(3)
+            .collect(),
     }
 }
 

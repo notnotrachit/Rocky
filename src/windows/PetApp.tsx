@@ -3,8 +3,8 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, Window } from "@tauri-apps/api/window";
 import RockyScene from "../RockyScene";
 import { SpeechBubble } from "../components/SpeechBubble";
-import { getAccessibilityObservation, getControlSettings, getPetScale, planPetAction, readScreenText, startVoiceRecording, stopVoiceRecordingAndTranscribe } from "../lib/commands";
-import { defaultSettings, idleAction, type AccessibilityObservation, type ActiveApp, type PetAction, type VoiceLevel } from "../types";
+import { getAccessibilityObservation, getControlSettings, getPetScale, planPetAction, readScreenText, setControlSettings, setPetScale as persistPetScale, startVoiceRecording, stopVoiceRecordingAndTranscribe } from "../lib/commands";
+import { defaultSettings, idleAction, type AccessibilityObservation, type ActiveApp, type PetAction, type PetToolCall } from "../types";
 
 type ChatLine = {
   speaker: "human" | "rocky";
@@ -25,7 +25,6 @@ export function PetApp() {
   const [chatBusy, setChatBusy] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
-  const [voiceLevel, setVoiceLevel] = useState(0);
   const pointerDownAt = useRef<{ x: number; y: number; time: number } | null>(null);
   const voiceRecording = useRef(false);
   const chatBusyRef = useRef(false);
@@ -42,9 +41,6 @@ export function PetApp() {
     const unlistenVoiceStop = listen("voice-shortcut-stop", () => {
       stopVoice();
     });
-    const unlistenVoiceLevel = listen<VoiceLevel>("voice-level", (event) => {
-      setVoiceLevel(event.payload.level);
-    });
 
     return () => {
       unlistenAction.then((dispose) => dispose());
@@ -52,7 +48,6 @@ export function PetApp() {
       unlistenScale.then((dispose) => dispose());
       unlistenVoiceStart.then((dispose) => dispose());
       unlistenVoiceStop.then((dispose) => dispose());
-      unlistenVoiceLevel.then((dispose) => dispose());
     };
   }, []);
 
@@ -111,7 +106,10 @@ export function PetApp() {
       const ocrText = settings.ocrEnabled && shouldReadScreen(trimmed)
         ? await readScreenText()
             .then((result) => result.text.trim())
-            .catch((error) => `OCR failed: ${String(error)}`)
+            .catch((error) => {
+              console.error("Rocky manual OCR failed", error);
+              return `OCR failed: ${formatError(error)}`;
+            })
         : "";
       const message = ocrText ? `${trimmed}\n\nVisible screen OCR text:\n${ocrText}` : trimmed;
       const result = await planPetAction({
@@ -123,14 +121,55 @@ export function PetApp() {
 
       setAction(result.action);
       setChatLines((lines) => [...lines, { speaker: "rocky", text: result.action.speech }]);
+      await executeToolCalls(result.action.toolCalls ?? [], settings);
     } catch (error) {
       const message = "Brain stumble. Try again, question?";
-      setChatError(String(error));
+      console.error("Rocky chat failed", error);
+      setChatError(formatError(error));
       setAction({ mood: "confused", animation: "confused", speech: message, durationMs: 10_000 });
       setChatLines((lines) => [...lines, { speaker: "rocky", text: message }]);
     } finally {
       setChatBusy(false);
       emit("rocky-manual-busy", false).catch(() => undefined);
+    }
+  }
+
+  async function executeToolCalls(toolCalls: PetToolCall[], settingsSnapshot = defaultSettings) {
+    for (const tool of toolCalls) {
+      if (tool.name === "openControls") {
+        await openControls();
+      }
+
+      if (tool.name === "showMemory") {
+        emit("controls-tab", "memory").catch(() => undefined);
+        await openControls();
+      }
+
+      if (tool.name === "toggleQuietMode") {
+        const current = await getControlSettings().then((saved) => ({ ...defaultSettings, ...saved }));
+        await setControlSettings({ ...current, quietMode: !current.quietMode });
+        emit("controls-settings-updated", true).catch(() => undefined);
+      }
+
+      if (tool.name === "setPetScale") {
+        const nextScale = Math.min(Math.max(Number(tool.argument ?? "1"), 0.6), 1.7);
+        await persistPetScale(nextScale);
+        setPetScale(nextScale);
+        emit("pet-scale", nextScale).catch(() => undefined);
+      }
+
+      if (tool.name === "triggerOcr") {
+        if (!settingsSnapshot.ocrEnabled) {
+          setChatLines((lines) => [...lines, { speaker: "rocky", text: "OCR disabled. Enable screen reading in privacy controls, question?" }]);
+          continue;
+        }
+
+        const text = await readScreenText().then((result) => result.text.trim()).catch((error) => {
+          console.error("Rocky OCR tool failed", error);
+          return `OCR failed: ${formatError(error)}`;
+        });
+        setChatLines((lines) => [...lines, { speaker: "rocky", text: text ? `OCR saw: ${text.slice(0, 220)}` : "OCR saw no text." }]);
+      }
     }
   }
 
@@ -149,7 +188,8 @@ export function PetApp() {
     try {
       await startVoiceRecording();
     } catch (error) {
-      setChatError(`Could not start Rust voice recording: ${String(error)}`);
+      console.error("Rocky voice recording failed to start", error);
+      setChatError(`Could not start Rust voice recording: ${formatError(error)}`);
       setAction({ mood: "confused", animation: "confused", speech: "Microphone engine not ready. Rocky cannot hear.", durationMs: 10_000 });
       return;
     }
@@ -180,12 +220,19 @@ export function PetApp() {
       setChatInput("");
       await sendMessage(transcript);
     } catch (error) {
-      setChatError(String(error));
+      const message = formatError(error);
+      if (isExpectedVoiceCancel(message)) {
+        console.debug("Rocky voice cancelled", { message, error });
+        setChatError(null);
+        setAction({ mood: "confused", animation: "confused", speech: message, durationMs: 5_000 });
+      } else {
+        console.error("Rocky voice transcription failed", error);
+        setChatError(message);
+        setAction({ mood: "confused", animation: "confused", speech: "Local ears not wired yet. Soon, question?", durationMs: 10_000 });
+      }
       emit("rocky-manual-busy", false).catch(() => undefined);
-      setAction({ mood: "confused", animation: "confused", speech: "Local ears not wired yet. Soon, question?", durationMs: 10_000 });
     } finally {
       setVoiceState("idle");
-      setVoiceLevel(0);
     }
   }
 
@@ -206,7 +253,6 @@ export function PetApp() {
         rocky.sys
       </button>
       <div className="absolute inset-x-0 h-[300px]" style={{ bottom: rockyBottom, transform: `scale(${petScale})`, transformOrigin: "50% 100%" }}>
-        {voiceState === "listening" && <VoiceAura level={voiceLevel} />}
         <RockyScene animation={action.animation} interactive={false} />
       </div>
       <button
@@ -216,7 +262,7 @@ export function PetApp() {
         onPointerDown={handleRockyPointerDown}
         onPointerUp={handleRockyPointerUp}
       />
-      <SpeechBubble text={action.speech} mood={action.mood} top={speechTop} />
+      {!isQuietObserveSpeech(action.speech) && <SpeechBubble text={action.speech} mood={action.mood} top={speechTop} />}
       {chatOpen && (
         <section
           className="absolute left-1/2 z-40 grid max-h-[220px] w-[330px] -translate-x-1/2 grid-rows-[auto_1fr_auto] gap-2 rounded-3xl border border-emerald-200/25 bg-zinc-950/88 p-3 text-emerald-50 shadow-2xl shadow-black/40 backdrop-blur-2xl"
@@ -278,22 +324,6 @@ export function PetApp() {
   );
 }
 
-function VoiceAura({ level }: { level: number }) {
-  const bars = [0.35, 0.55, 0.8, 0.6, 0.42];
-
-  return (
-    <div className="pointer-events-none absolute left-1/2 top-8 z-0 flex -translate-x-1/2 items-end gap-2 opacity-80">
-      {bars.map((base, index) => (
-        <span
-          key={index}
-          className="w-2 rounded-full bg-emerald-200/55 shadow-[0_0_18px_rgba(110,255,190,0.45)] transition-all duration-75"
-          style={{ height: `${18 + (base + level) * 58}px`, opacity: 0.25 + Math.min(0.65, level + base * 0.35) }}
-        />
-      ))}
-    </div>
-  );
-}
-
 function summarizeObservation(observation: AccessibilityObservation | null) {
   const activeApp: ActiveApp | null | undefined = observation?.activeApp;
   if (!activeApp) return null;
@@ -307,7 +337,30 @@ function summarizeObservation(observation: AccessibilityObservation | null) {
   return parts.join("; ");
 }
 
+function isQuietObserveSpeech(speech: string) {
+  const normalized = speech.trim().toLowerCase();
+  return normalized === "i observe. quiet rock mode." || normalized === "i observe. quick rock mode.";
+}
+
 function shouldReadScreen(message: string) {
   const lower = message.toLowerCase();
   return lower.includes("read screen") || lower.includes("read my screen") || lower.includes("ocr") || lower.includes("what is on my screen") || lower.includes("what's on my screen");
+}
+
+function formatError(error: unknown) {
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    if ("message" in error && typeof error.message === "string") return error.message;
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return Object.prototype.toString.call(error);
+    }
+  }
+  return String(error);
+}
+
+function isExpectedVoiceCancel(message: string) {
+  const lower = message.toLowerCase();
+  return lower.includes("heard no audio") || lower.includes("heard silence") || lower.includes("hold voice") || lower.includes("no words to decode");
 }
