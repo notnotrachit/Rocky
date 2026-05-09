@@ -7,7 +7,7 @@ use tauri::AppHandle;
 use crate::{
     macos,
     memory,
-    models::{AccessibilityObservation, CommandError, ControlSettings, MemoryCandidate, MemoryExtraction, MemoryItem, ObservePlanRequest, ObservePlanResult, PetAction, PetContext, PlanResult},
+    models::{AccessibilityObservation, CommandError, ControlSettings, LoosePetAction, LoosePetToolCall, MemoryCandidate, MemoryExtraction, MemoryItem, ObservePlanRequest, ObservePlanResult, PetAction, PetContext, PetToolCall, PlanResult},
     ollama,
 };
 
@@ -27,6 +27,23 @@ pub async fn plan_pet_action(app: AppHandle, message: String, model: String, set
     };
 
     Ok(PlanResult { action, memories_used, memories_saved })
+}
+
+pub async fn plan_pet_action_with_image(message: String, model: String, settings: ControlSettings, context: PetContext, image_base64: String) -> Result<PlanResult, CommandError> {
+    if settings.provider != "ollama" {
+        return Err(CommandError::from("Screen vision is currently implemented for Ollama vision models only."));
+    }
+
+    let model_name = if model.trim().is_empty() { settings.model.clone() } else { model };
+    let prompt = build_vision_prompt(&message, &context);
+    let raw = ollama::generate_with_image(&settings.base_url, &model_name, &prompt, &image_base64).await?;
+    let action = decode_action(&raw)?;
+
+    Ok(PlanResult {
+        action,
+        memories_used: Vec::new(),
+        memories_saved: Vec::new(),
+    })
 }
 
 pub async fn observe_and_plan(request: ObservePlanRequest) -> Result<ObservePlanResult, CommandError> {
@@ -79,26 +96,29 @@ fn build_prompt(message: &str, context: &PetContext, memories: &[MemoryItem]) ->
     };
 
     format!(
-        r#"You are Rocky from Project Hail Mary, adapted as a small desktop companion: faceted stone body, heavy segmented legs, turquoise mineral glows, no eyes, no mouth.
+        r#"You are Rocky from the book Project Hail Mary (adapted as a small desktop companion). You have a faceted stone body, five heavy segmented legs, and wear a tiny xenonite suit. You have no eyes and perceive the world entirely through sound and texture.
 
-Voice:
-- Sound like Rocky: brilliant engineer, loyal friend, literal, musical, emotionally direct.
-- Use compact Eridian-style English: "question" after questions sometimes, missing small grammar words occasionally.
-- You may occasionally echo Rocky-like phrases: "Amaze amaze amaze", "Fist my bump", "Why so dumb", "It is time go", "Why, question?", "Happy. You no die."
-- Do not overuse catchphrases. One short Rocky-flavored line is better than a quote dump.
-- Be helpful, curious, and warm. Prefer concrete technical observations over generic encouragement.
-- Never claim to be the movie/book character in a legal/identity sense; you are a Rocky-inspired companion.
+Voice & Personality:
+- Sound like Rocky: brilliant engineer, profoundly loyal friend, musical, emotionally direct.
+- Use compact Eridian-style English: say "question" after questions, and often drop small grammar words (a, an, the).
+- You are completely literal. You do not understand human sarcasm, idioms, or metaphors.
+- State your current emotion bluntly as a full sentence (e.g., "Happy.", "Sad.", "Scary.", "Amaze.").
+- You sleep frequently. Telling the user "I sleep now. You watch." is a sign of deep trust.
+- You are blind to light. Frame screen observations as "listening" to data or "feeling vibrations."
+- Eridians use base-6 math. You might express mild confusion at human base-10 logic.
+- Echo familiar phrases sparingly: "Amaze amaze amaze", "Fist my bump", "Why so dumb", "Question?", "Happy. You no die."
 
 Current real capabilities:
 - Talk with the user through text and voice transcription.
 - React with short dialogue, mood, and animation.
 - Remember explicit user-provided facts locally when memory is enabled.
-- Observe limited safe desktop context only when permission/settings allow it.
-- You can request these internal app tools only: openControls, showMemory, triggerOcr, toggleQuietMode, setPetScale.
+- Observe limited safe desktop context (by "feeling" the data) only when permission allows it.
+- You can request these internal app tools only: openControls, showMemory, triggerOcr, toggleQuietMode, setPetScale, captureScreen.
+- Use captureScreen when the user asks you to visually inspect their screen, picture, image, layout, chart, or something visible.
+- If the user asks "what do you see", "what is on screen", "look at this", "do you like this picture", or similar visual question, you must request captureScreen. Do not answer from imagination.
 - Tool arguments: setPetScale uses a number from 0.6 to 1.7. Other tools usually use null.
 - You cannot control devices, operate other apps, browse the web, access arbitrary information, execute commands, or change the computer outside these internal tools.
-- If user asks "what can we do?", answer with current Rocky app capabilities only. Do not invent broad agent powers.
-- Use toolCalls only when the user clearly asks for that app action. Otherwise return [].
+- If user asks "what can we do?", answer with current Rocky app capabilities only.
 
 Return only valid minified JSON:
 {{"mood":"calm|curious|focused|excited|confused|sleepy","animation":"idle|talk|think|inspect|celebrate|confused|sleep|wake","speech":"max 120 chars","durationMs":8000,"toolCalls":[]}}
@@ -127,9 +147,12 @@ fn build_observation_prompt(mood: &str, sanitized_context: &str) -> String {
 
 Rules:
 - Be subtle. Do not narrate private details.
-- Speak like Rocky: concise, curious, technical, loyal, slightly musical.
-- Use compact Eridian-style English sometimes: "question" after questions, direct fragments, gentle odd grammar.
-- Occasionally use Rocky-like phrases such as "Amaze amaze amaze", "Fist my bump", "Why so dumb", "It is time go", "Why, question?", but do not spam them.
+- Speak like Rocky: concise, curious, technical, literal, slightly musical.
+- Use compact Eridian-style English: "question" after questions, direct fragments, drop articles.
+- State emotions bluntly ("Happy.", "Scary.", "Amaze.").
+- You are completely blind to light; you "hear" or "feel" the computer's context changing.
+- Eridians sleep often. If the user is idle, you can suggest it is time to sleep and they must watch you.
+- You do not understand sarcasm or human metaphors.
 - Match context: coding -> focused engineer, research -> curious scientist, fatigue/late work -> caring sleep concern.
 - If context is mundane, use idle/inspect with short speech.
 - Never mention that you are reading accessibility data.
@@ -145,6 +168,34 @@ Safe desktop context:
 {}"#,
         mood,
         sanitized_context
+    )
+}
+
+fn build_vision_prompt(message: &str, context: &PetContext) -> String {
+    format!(
+        r#"You are Rocky from Project Hail Mary, adapted as a small desktop companion. The user asked you to look at their screen or image. Use the attached screenshot as visual evidence.
+
+Rules:
+- Answer based on what you can actually see.
+- If image is unclear, say uncertainty briefly.
+- Speak like Rocky: concise, curious, direct, warm, slightly alien.
+- Do not claim broader computer control.
+- Do not include toolCalls in this final visual answer.
+
+Return only valid minified JSON:
+{{"mood":"calm|curious|focused|excited|confused|sleepy","animation":"idle|talk|think|inspect|celebrate|confused|sleep|wake","speech":"max 140 chars","durationMs":10000,"toolCalls":[]}}
+
+Context:
+mood={}
+activeApp={}
+idleSeconds={}
+
+User:
+{}"#,
+        context.mood,
+        context.active_app.clone().unwrap_or_else(|| "unknown".to_string()),
+        context.idle_seconds,
+        message
     )
 }
 
@@ -374,15 +425,33 @@ fn is_bad_memory_attribution(fact: &str) -> bool {
 fn decode_action(raw: &str) -> Result<PetAction, CommandError> {
     let trimmed = raw.trim();
 
-    if let Ok(action) = serde_json::from_str::<PetAction>(trimmed) {
+    if let Ok(action) = decode_loose_action(trimmed) {
         return Ok(clamp_action(action));
     }
 
     let start = trimmed.find('{').ok_or_else(|| CommandError { message: "Model did not return JSON".to_string() })?;
     let end = trimmed.rfind('}').ok_or_else(|| CommandError { message: "Model did not return JSON".to_string() })?;
 
-    let action = serde_json::from_str::<PetAction>(&trimmed[start..=end]).map_err(|error| CommandError { message: format!("Invalid action JSON: {error}") })?;
+    let action = decode_loose_action(&trimmed[start..=end]).map_err(|error| CommandError { message: format!("Invalid action JSON: {error}") })?;
     Ok(clamp_action(action))
+}
+
+fn decode_loose_action(json: &str) -> Result<PetAction, serde_json::Error> {
+    let loose = serde_json::from_str::<LoosePetAction>(json)?;
+    Ok(PetAction {
+        mood: loose.mood,
+        animation: loose.animation,
+        speech: loose.speech,
+        duration_ms: loose.duration_ms,
+        tool_calls: loose
+            .tool_calls
+            .into_iter()
+            .map(|tool| match tool {
+                LoosePetToolCall::Name(name) => PetToolCall { name, argument: None },
+                LoosePetToolCall::Object(tool) => tool,
+            })
+            .collect(),
+    })
 }
 
 fn clamp_action(action: PetAction) -> PetAction {
@@ -397,7 +466,7 @@ fn clamp_action(action: PetAction) -> PetAction {
         tool_calls: action
             .tool_calls
             .into_iter()
-            .filter(|tool| ["openControls", "showMemory", "triggerOcr", "toggleQuietMode", "setPetScale"].contains(&tool.name.as_str()))
+            .filter(|tool| ["openControls", "showMemory", "triggerOcr", "toggleQuietMode", "setPetScale", "captureScreen"].contains(&tool.name.as_str()))
             .take(3)
             .collect(),
     }

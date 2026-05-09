@@ -4,7 +4,7 @@ use crate::{
     llm,
     macos,
     memory,
-    models::{AccessibilityObservation, ActiveApp, CommandError, ControlSettings, MemoryItem, ObservePlanRequest, ObservePlanResult, OcrResult, OllamaHealth, OllamaModel, PetContext, PlanResult, VoiceModelInfo, VoiceSettings},
+    models::{AccessibilityObservation, ActiveApp, CommandError, ControlSettings, MemoryItem, ObservePlanRequest, ObservePlanResult, OcrResult, OllamaHealth, OllamaModel, PetContext, PlanResult, ScreenImage, VoiceModelInfo, VoiceSettings},
     ollama,
     shortcuts,
     settings,
@@ -24,6 +24,11 @@ pub async fn ollama_models() -> Result<Vec<OllamaModel>, CommandError> {
 #[tauri::command]
 pub async fn plan_pet_action(app: AppHandle, message: String, model: String, settings: ControlSettings, context: PetContext) -> Result<PlanResult, CommandError> {
     llm::plan_pet_action(app, message, model, settings, context).await
+}
+
+#[tauri::command]
+pub async fn plan_pet_action_with_image(message: String, model: String, settings: ControlSettings, context: PetContext, image_base64: String) -> Result<PlanResult, CommandError> {
+    llm::plan_pet_action_with_image(message, model, settings, context, image_base64).await
 }
 
 #[tauri::command]
@@ -49,6 +54,11 @@ pub fn accessibility_observation() -> Result<AccessibilityObservation, CommandEr
 #[tauri::command]
 pub fn read_screen_text() -> Result<OcrResult, CommandError> {
     macos::read_screen_text()
+}
+
+#[tauri::command]
+pub fn capture_screen_image() -> Result<ScreenImage, CommandError> {
+    macos::capture_screen_image()
 }
 
 #[tauri::command]

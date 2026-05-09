@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AccessibilityObservation, ActiveApp, ControlSettings, MemoryItem, ObservePlanResult, OcrResult, OllamaHealth, OllamaModel, PetAction, PetMood, PlanResult, VoiceModelInfo, VoiceSettings } from "../types";
+import type { AccessibilityObservation, ActiveApp, ControlSettings, MemoryItem, ObservePlanResult, OcrResult, OllamaHealth, OllamaModel, PetAction, PetMood, PlanResult, ScreenImage, VoiceModelInfo, VoiceSettings } from "../types";
 
 export function getPetScale() {
   return invoke<number>("get_pet_scale");
@@ -29,6 +29,10 @@ export function planPetAction(input: { message: string; model: string; settings:
   return invoke<PlanResult>("plan_pet_action", input);
 }
 
+export function planPetActionWithImage(input: { message: string; model: string; settings: ControlSettings; context: { mood: PetMood; activeApp: string | null; idleSeconds: number }; imageBase64: string }) {
+  return invoke<PlanResult>("plan_pet_action_with_image", input);
+}
+
 export function getActiveApp() {
   return invoke<ActiveApp>("active_app");
 }
@@ -47,6 +51,10 @@ export function getAccessibilityObservation() {
 
 export function readScreenText() {
   return invoke<OcrResult>("read_screen_text");
+}
+
+export function captureScreenImage() {
+  return invoke<ScreenImage>("capture_screen_image");
 }
 
 export function observeAndPlan(input: { settings: ControlSettings; mood: PetMood; lastReactionKey: string | null }) {

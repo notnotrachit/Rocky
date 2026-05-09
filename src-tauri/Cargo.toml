@@ -28,3 +28,4 @@ tokio = { version = "1.52.2", features = ["fs", "io-util"] }
 cpal = "0.16.0"
 transcribe-rs = { version = "0.3.3", features = ["whisper-metal"] }
 tauri-plugin-global-shortcut = "2.3.1"
+base64 = "0.22.1"

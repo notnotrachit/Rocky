@@ -3,12 +3,13 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, Window } from "@tauri-apps/api/window";
 import RockyScene from "../RockyScene";
 import { SpeechBubble } from "../components/SpeechBubble";
-import { getAccessibilityObservation, getControlSettings, getPetScale, planPetAction, quitApp, readScreenText, setControlSettings, setPetScale as persistPetScale, startVoiceRecording, stopVoiceRecordingAndTranscribe } from "../lib/commands";
+import { captureScreenImage, getAccessibilityObservation, getControlSettings, getPetScale, planPetAction, planPetActionWithImage, quitApp, readScreenText, setControlSettings, setPetScale as persistPetScale, startVoiceRecording, stopVoiceRecordingAndTranscribe } from "../lib/commands";
 import { defaultSettings, idleAction, type AccessibilityObservation, type ActiveApp, type PetAction, type PetToolCall } from "../types";
 
 type ChatLine = {
   speaker: "human" | "rocky";
   text: string;
+  imageDataUrl?: string;
 };
 
 type VoiceState = "idle" | "listening" | "transcribing";
@@ -148,10 +149,15 @@ export function PetApp() {
         settings,
         context: { mood: action.mood, activeApp: summarizeObservation(observation), idleSeconds: 0 },
       });
+      const toolCalls = withVisionFallback(result.action.toolCalls ?? [], trimmed, settings);
 
-      setAction(result.action);
-      setChatLines((lines) => [...lines, { speaker: "rocky", text: result.action.speech }]);
-      await executeToolCalls(result.action.toolCalls ?? [], settings);
+      if (toolCalls.some((tool) => tool.name === "captureScreen")) {
+        await executeToolCalls(toolCalls, settings, message, observation);
+      } else {
+        setAction(result.action);
+        setChatLines((lines) => [...lines, { speaker: "rocky", text: result.action.speech }]);
+        await executeToolCalls(toolCalls, settings, message, observation);
+      }
     } catch (error) {
       const message = "Brain stumble. Try again, question?";
       console.error("Rocky chat failed", error);
@@ -164,7 +170,7 @@ export function PetApp() {
     }
   }
 
-  async function executeToolCalls(toolCalls: PetToolCall[], settingsSnapshot = defaultSettings) {
+  async function executeToolCalls(toolCalls: PetToolCall[], settingsSnapshot = defaultSettings, originalMessage = "", observation: AccessibilityObservation | null = null) {
     for (const tool of toolCalls) {
       if (tool.name === "openControls") {
         await openControls();
@@ -199,6 +205,42 @@ export function PetApp() {
           return `OCR failed: ${formatError(error)}`;
         });
         setChatLines((lines) => [...lines, { speaker: "rocky", text: text ? `OCR saw: ${text.slice(0, 220)}` : "OCR saw no text." }]);
+      }
+
+      if (tool.name === "captureScreen") {
+        if (!settingsSnapshot.visionEnabled) {
+          const text = "Vision disabled. Enable screen vision in privacy controls, question?";
+          setAction({ mood: "confused", animation: "confused", speech: text, durationMs: 8_000 });
+          setChatLines((lines) => [...lines, { speaker: "rocky", text }]);
+          continue;
+        }
+
+        if (settingsSnapshot.provider !== "ollama") {
+          const text = "Screen vision currently works with Ollama vision models only.";
+          setAction({ mood: "confused", animation: "confused", speech: text, durationMs: 8_000 });
+          setChatLines((lines) => [...lines, { speaker: "rocky", text }]);
+          continue;
+        }
+
+        setAction({ mood: "focused", animation: "inspect", speech: "Looking at screen. Rocky feel photons secondhand...", durationMs: 20_000 });
+        try {
+          const image = await captureScreenImage();
+          const imageDataUrl = `data:${image.mediaType};base64,${image.imageBase64}`;
+          const result = await planPetActionWithImage({
+            message: originalMessage,
+            model: settingsSnapshot.model,
+            settings: settingsSnapshot,
+            context: { mood: action.mood, activeApp: summarizeObservation(observation), idleSeconds: 0 },
+            imageBase64: image.imageBase64,
+          });
+          setAction(result.action);
+          setChatLines((lines) => [...lines, { speaker: "rocky", text: result.action.speech, imageDataUrl }]);
+        } catch (error) {
+          console.error("Rocky screen vision failed", error);
+          const text = formatError(error);
+          setAction({ mood: "confused", animation: "confused", speech: text, durationMs: 10_000 });
+          setChatLines((lines) => [...lines, { speaker: "rocky", text }]);
+        }
       }
     }
   }
@@ -318,9 +360,18 @@ export function PetApp() {
 
           <div className="grid max-h-24 gap-2 overflow-auto rounded-2xl border border-emerald-100/10 bg-black/25 p-2 text-sm">
             {chatLines.slice(-8).map((line, index) => (
-              <p key={`${line.speaker}-${index}`} className={line.speaker === "human" ? "text-right text-emerald-100" : "text-left text-stone-100"}>
-                <span className="text-emerald-300/70">{line.speaker === "human" ? "you" : "rocky"}:</span> {line.text}
-              </p>
+              <div key={`${line.speaker}-${index}`} className={line.speaker === "human" ? "text-right text-emerald-100" : "text-left text-stone-100"}>
+                {line.imageDataUrl && (
+                  <img
+                    className="mb-2 h-16 w-24 rounded-xl border border-emerald-100/15 object-cover opacity-85"
+                    src={line.imageDataUrl}
+                    alt="Captured screen preview"
+                  />
+                )}
+                <p>
+                  <span className="text-emerald-300/70">{line.speaker === "human" ? "you" : "rocky"}:</span> {line.text}
+                </p>
+              </div>
             ))}
             {chatError && <p className="text-xs text-amber-200">{chatError}</p>}
           </div>
@@ -383,6 +434,27 @@ function isQuietObserveSpeech(speech: string) {
 function shouldReadScreen(message: string) {
   const lower = message.toLowerCase();
   return lower.includes("read screen") || lower.includes("read my screen") || lower.includes("ocr") || lower.includes("what is on my screen") || lower.includes("what's on my screen");
+}
+
+function shouldSeeScreen(message: string) {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("see my screen") ||
+    lower.includes("see on screen") ||
+    lower.includes("what do you see") ||
+    lower.includes("what's on my screen") ||
+    lower.includes("what is on my screen") ||
+    lower.includes("look at this") ||
+    lower.includes("look at my screen") ||
+    lower.includes("do you like this picture") ||
+    lower.includes("describe this")
+  );
+}
+
+function withVisionFallback(toolCalls: PetToolCall[], userMessage: string, settings: typeof defaultSettings): PetToolCall[] {
+  if (!settings.visionEnabled || !shouldSeeScreen(userMessage)) return toolCalls;
+  if (toolCalls.some((tool) => tool.name === "captureScreen")) return toolCalls;
+  return [...toolCalls, { name: "captureScreen", argument: null }];
 }
 
 function truncateSpeech(text: string) {

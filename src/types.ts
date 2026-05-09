@@ -11,7 +11,7 @@ export type PetAction = {
 };
 
 export type PetToolCall = {
-  name: "openControls" | "showMemory" | "triggerOcr" | "toggleQuietMode" | "setPetScale";
+  name: "openControls" | "showMemory" | "triggerOcr" | "toggleQuietMode" | "setPetScale" | "captureScreen";
   argument?: string | null;
 };
 
@@ -41,6 +41,12 @@ export type AccessibilityObservation = {
 
 export type OcrResult = {
   text: string;
+  source: string;
+};
+
+export type ScreenImage = {
+  imageBase64: string;
+  mediaType: string;
   source: string;
 };
 
@@ -74,6 +80,7 @@ export type ControlSettings = {
   launchAtLogin: boolean;
   memoryEnabled: boolean;
   ocrEnabled: boolean;
+  visionEnabled: boolean;
   ocrObservationEnabled: boolean;
   ocrObservationIntervalMinutes: number;
 };
@@ -142,6 +149,7 @@ export const defaultSettings: ControlSettings = {
   launchAtLogin: false,
   memoryEnabled: true,
   ocrEnabled: false,
+  visionEnabled: false,
   ocrObservationEnabled: false,
   ocrObservationIntervalMinutes: 15,
 };

@@ -26,6 +26,24 @@ pub struct PetToolCall {
     pub argument: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoosePetAction {
+    pub mood: String,
+    pub animation: String,
+    pub speech: String,
+    pub duration_ms: u32,
+    #[serde(default)]
+    pub tool_calls: Vec<LoosePetToolCall>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum LoosePetToolCall {
+    Name(String),
+    Object(PetToolCall),
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OllamaHealth {
@@ -56,6 +74,14 @@ pub struct AccessibilityObservation {
 #[serde(rename_all = "camelCase")]
 pub struct OcrResult {
     pub text: String,
+    pub source: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ScreenImage {
+    pub image_base64: String,
+    pub media_type: String,
     pub source: String,
 }
 
@@ -128,6 +154,7 @@ pub struct ControlSettings {
     pub launch_at_login: bool,
     pub memory_enabled: bool,
     pub ocr_enabled: bool,
+    pub vision_enabled: bool,
     pub ocr_observation_enabled: bool,
     pub ocr_observation_interval_minutes: u32,
 }
@@ -144,6 +171,7 @@ impl Default for ControlSettings {
             launch_at_login: false,
             memory_enabled: true,
             ocr_enabled: false,
+            vision_enabled: false,
             ocr_observation_enabled: false,
             ocr_observation_interval_minutes: 15,
         }
@@ -244,6 +272,8 @@ pub struct ChatRequest {
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub images: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]

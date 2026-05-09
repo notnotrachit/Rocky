@@ -1,5 +1,6 @@
-use crate::models::{AccessibilityObservation, ActiveApp, CommandError, OcrResult};
+use crate::models::{AccessibilityObservation, ActiveApp, CommandError, OcrResult, ScreenImage};
 
+use base64::{engine::general_purpose, Engine as _};
 use std::{fs, process::Command};
 
 #[cfg(target_os = "macos")]
@@ -206,6 +207,34 @@ print(text)
 }
 
 #[cfg(target_os = "macos")]
+pub fn capture_screen_image() -> Result<ScreenImage, CommandError> {
+    let mut screenshot_path = std::env::temp_dir();
+    screenshot_path.push(format!("rocky-vision-{}.png", std::process::id()));
+
+    let screenshot_status = Command::new("/usr/sbin/screencapture")
+        .arg("-x")
+        .arg(&screenshot_path)
+        .status()
+        .map_err(|error| CommandError::from(format!("Could not start screencapture: {error}")))?;
+
+    if !screenshot_status.success() {
+        return Err(CommandError::from(
+            "Could not capture screen. macOS may require Screen Recording permission for Rocky.",
+        ));
+    }
+
+    let bytes = fs::read(&screenshot_path)
+        .map_err(|error| CommandError::from(format!("Could not read screen image: {error}")))?;
+    let _ = fs::remove_file(&screenshot_path);
+
+    Ok(ScreenImage {
+        image_base64: general_purpose::STANDARD.encode(bytes),
+        media_type: "image/png".to_string(),
+        source: "macOS screen capture".to_string(),
+    })
+}
+
+#[cfg(target_os = "macos")]
 unsafe fn copy_ax_element_attribute(element: AXUIElementRef, attribute: CFStringRef) -> Option<AXUIElementRef> {
     let mut value: CFTypeRef = ptr::null();
     if AXUIElementCopyAttributeValue(element, attribute, &mut value) != 0 || value.is_null() {
@@ -271,6 +300,11 @@ pub fn accessibility_observation() -> Result<AccessibilityObservation, CommandEr
         focused_value: None,
         selected_text: None,
     })
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn capture_screen_image() -> Result<ScreenImage, CommandError> {
+    Err(CommandError::from("Screen vision is only implemented for macOS"))
 }
 
 #[cfg(not(target_os = "macos"))]

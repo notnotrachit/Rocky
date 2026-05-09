@@ -401,6 +401,7 @@ export function ControlsApp() {
             <ToggleRow label="observation" checked={settings.observationEnabled} onChange={(observationEnabled) => updateSettings({ ...settings, observationEnabled })} />
             <ToggleRow label="memory" checked={settings.memoryEnabled} onChange={(memoryEnabled) => updateSettings({ ...settings, memoryEnabled })} />
             <ToggleRow label="OCR screen reading" checked={settings.ocrEnabled} onChange={(ocrEnabled) => updateSettings({ ...settings, ocrEnabled })} />
+            <ToggleRow label="screen vision" checked={settings.visionEnabled} onChange={(visionEnabled) => updateSettings({ ...settings, visionEnabled })} />
             <ToggleRow label="slow OCR observation" checked={settings.ocrObservationEnabled} onChange={(ocrObservationEnabled) => updateSettings({ ...settings, ocrObservationEnabled })} />
             <label className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-2xl border border-emerald-100/10 bg-black/20 p-3">
               <span className="field-label">OCR interval</span>
@@ -525,10 +526,11 @@ export function ControlsApp() {
             <ToggleRow label="quiet mode" checked={settings.quietMode} onChange={(quietMode) => updateSettings({ ...settings, quietMode })} />
             <ToggleRow label="memory" checked={settings.memoryEnabled} onChange={(memoryEnabled) => updateSettings({ ...settings, memoryEnabled })} />
             <ToggleRow label="OCR screen reading" checked={settings.ocrEnabled} onChange={(ocrEnabled) => updateSettings({ ...settings, ocrEnabled })} />
+            <ToggleRow label="screen vision" checked={settings.visionEnabled} onChange={(visionEnabled) => updateSettings({ ...settings, visionEnabled })} />
             <ToggleRow label="slow OCR observation" checked={settings.ocrObservationEnabled} onChange={(ocrObservationEnabled) => updateSettings({ ...settings, ocrObservationEnabled })} />
             <ToggleRow label="click-through pet" checked={clickThrough} onChange={toggleClickThrough} />
             <div className="rounded-2xl border border-amber-300/30 bg-amber-950/20 p-3 text-sm text-amber-100">
-              OCR warning: when enabled and triggered, Rocky captures the visible screen locally and sends extracted text to the configured LLM provider. Slow OCR observation does this in the background every configured interval. No sanitization is applied yet.
+              OCR/Vision warning: when enabled and triggered, Rocky captures the visible screen locally. OCR sends extracted text; vision sends the screenshot image to the configured model. No sanitization is applied yet.
             </div>
             <StatusGrid
               rows={[
@@ -539,6 +541,7 @@ export function ControlsApp() {
                 ["focused role", accessibilityObservation?.focusedRole ?? "unavailable"],
                 ["accessibility", accessibilityGranted === null ? "checking" : accessibilityGranted ? "granted" : "not granted"],
                 ["manual OCR", settings.ocrEnabled ? "enabled" : "disabled"],
+                ["screen vision", settings.visionEnabled ? "enabled" : "disabled"],
                 ["slow OCR observation", settings.ocrObservationEnabled ? `${settings.ocrObservationIntervalMinutes} min` : "disabled"],
                 ["planner skip", lastObservationSkip ?? "none"],
               ]}

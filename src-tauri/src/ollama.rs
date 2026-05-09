@@ -29,6 +29,7 @@ pub async fn generate(base_url: &str, model: &str, prompt: &str) -> Result<Strin
             messages: vec![ChatMessage {
                 role: "user".to_string(),
                 content: prompt.to_string(),
+                images: None,
             }],
             think: false,
             stream: false,
@@ -47,6 +48,38 @@ pub async fn generate(base_url: &str, model: &str, prompt: &str) -> Result<Strin
         .json::<ChatResponse>()
         .await
         .map_err(|error| CommandError { message: format!("Ollama response parse failed: {error}") })?;
+
+    Ok(response.message.content)
+}
+
+pub async fn generate_with_image(base_url: &str, model: &str, prompt: &str, image_base64: &str) -> Result<String, CommandError> {
+    let url = format!("{}/api/chat", base_url.trim_end_matches('/'));
+    let response = reqwest::Client::new()
+        .post(url)
+        .json(&ChatRequest {
+            model: model.to_string(),
+            messages: vec![ChatMessage {
+                role: "user".to_string(),
+                content: prompt.to_string(),
+                images: Some(vec![image_base64.to_string()]),
+            }],
+            think: false,
+            stream: false,
+        })
+        .send()
+        .await
+        .map_err(|error| CommandError { message: format!("Ollama vision request failed: {error}") })?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_else(|_| "no response body".to_string());
+        return Err(CommandError { message: format!("Ollama vision returned {status}: {body}") });
+    }
+
+    let response = response
+        .json::<ChatResponse>()
+        .await
+        .map_err(|error| CommandError { message: format!("Ollama vision response parse failed: {error}") })?;
 
     Ok(response.message.content)
 }
