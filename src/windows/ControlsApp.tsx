@@ -355,8 +355,8 @@ export function ControlsApp() {
   }
 
   return (
-    <main className="min-h-screen w-screen overflow-auto bg-[linear-gradient(145deg,#141615,#090c0a)] p-6 text-emerald-50">
-      <section className="grid min-h-[calc(100vh-48px)] gap-3 rounded-3xl border border-emerald-200/20 bg-zinc-950/80 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
+    <main className="h-screen w-screen overflow-hidden bg-[linear-gradient(145deg,#141615,#090c0a)] p-4 text-emerald-50">
+      <section className="grid h-full grid-rows-[auto_auto_minmax(0,1fr)] gap-3 rounded-3xl border border-emerald-200/20 bg-zinc-950/80 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
         <header className="flex items-start justify-between gap-5">
           <div>
             <p className="text-[11px] uppercase tracking-[0.16em] text-emerald-300">local companion</p>
@@ -373,8 +373,9 @@ export function ControlsApp() {
           ))}
         </div>
 
+        <div className="min-h-0 overflow-y-auto pr-1">
         {tab === "chat" && (
-          <section className="grid gap-3">
+          <section className="grid gap-3 pb-4">
             <ProviderPanel settings={settings} ollamaModels={ollamaModels} runtimeStatus={runtimeStatus} onChange={updateSettings} />
             <form onSubmit={submit} className="grid gap-3">
               <label className="grid gap-1.5">
@@ -390,7 +391,7 @@ export function ControlsApp() {
         )}
 
         {tab === "behavior" && (
-          <section className="grid gap-3">
+          <section className="grid gap-3 pb-4">
             <label className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-2xl border border-emerald-100/10 bg-black/20 p-3">
               <span className="field-label">pet size</span>
               <input className="accent-emerald-300" type="range" min="0.6" max="1.7" step="0.05" value={petScale} onChange={(event) => updatePetScale(Number(event.target.value))} />
@@ -411,7 +412,7 @@ export function ControlsApp() {
         )}
 
         {tab === "voice" && (
-          <section className="grid gap-3">
+          <section className="grid gap-3 pb-4">
             <ToggleRow label="use local speech-to-text" checked={voiceSettings.useLocalStt} onChange={(useLocalStt) => updateVoiceSettings({ ...voiceSettings, useLocalStt })} />
             <label className="grid gap-1.5">
               <span className="field-label">push-to-talk shortcut</span>
@@ -479,7 +480,7 @@ export function ControlsApp() {
         )}
 
         {tab === "memory" && (
-          <section className="grid gap-3">
+          <section className="grid gap-3 pb-4">
             <ToggleRow label="local memory" checked={settings.memoryEnabled} onChange={(memoryEnabled) => updateSettings({ ...settings, memoryEnabled })} />
             <StatusGrid
               rows={[
@@ -519,7 +520,7 @@ export function ControlsApp() {
         )}
 
         {tab === "privacy" && (
-          <section className="grid gap-3">
+          <section className="grid gap-3 pb-4">
             <ToggleRow label="screen observation" checked={settings.observationEnabled} onChange={(observationEnabled) => updateSettings({ ...settings, observationEnabled })} />
             <ToggleRow label="quiet mode" checked={settings.quietMode} onChange={(quietMode) => updateSettings({ ...settings, quietMode })} />
             <ToggleRow label="memory" checked={settings.memoryEnabled} onChange={(memoryEnabled) => updateSettings({ ...settings, memoryEnabled })} />
@@ -556,7 +557,7 @@ export function ControlsApp() {
         )}
 
         {tab === "debug" && (
-          <section className="grid gap-3">
+          <section className="grid gap-3 pb-4">
             <StatusGrid
               rows={[
                 ["mood", action.mood],
@@ -594,6 +595,7 @@ export function ControlsApp() {
             {runtimeStatus.lastError && <pre className="max-h-32 overflow-auto rounded-2xl border border-amber-300/30 bg-black/25 p-3 text-amber-100 whitespace-pre-wrap">{runtimeStatus.lastError}</pre>}
           </section>
         )}
+        </div>
       </section>
     </main>
   );
