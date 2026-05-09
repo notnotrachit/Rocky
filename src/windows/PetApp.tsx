@@ -1,9 +1,9 @@
-import { FormEvent, PointerEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, PointerEvent, MouseEvent, useEffect, useRef, useState } from "react";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, Window } from "@tauri-apps/api/window";
 import RockyScene from "../RockyScene";
 import { SpeechBubble } from "../components/SpeechBubble";
-import { getAccessibilityObservation, getControlSettings, getPetScale, planPetAction, readScreenText, setControlSettings, setPetScale as persistPetScale, startVoiceRecording, stopVoiceRecordingAndTranscribe } from "../lib/commands";
+import { getAccessibilityObservation, getControlSettings, getPetScale, planPetAction, quitApp, readScreenText, setControlSettings, setPetScale as persistPetScale, startVoiceRecording, stopVoiceRecordingAndTranscribe } from "../lib/commands";
 import { defaultSettings, idleAction, type AccessibilityObservation, type ActiveApp, type PetAction, type PetToolCall } from "../types";
 
 type ChatLine = {
@@ -12,6 +12,7 @@ type ChatLine = {
 };
 
 type VoiceState = "idle" | "listening" | "transcribing";
+type ContextMenuState = { x: number; y: number } | null;
 
 export function PetApp() {
   const [action, setAction] = useState<PetAction>(idleAction);
@@ -25,9 +26,11 @@ export function PetApp() {
   const [chatBusy, setChatBusy] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const pointerDownAt = useRef<{ x: number; y: number; time: number } | null>(null);
   const voiceRecording = useRef(false);
   const chatBusyRef = useRef(false);
+  const hideTimer = useRef<number | null>(null);
 
   useEffect(() => {
     getPetScale().then(setPetScale).catch(() => undefined);
@@ -41,6 +44,9 @@ export function PetApp() {
     const unlistenVoiceStop = listen("voice-shortcut-stop", () => {
       stopVoice();
     });
+    const unlistenFocus = getCurrentWindow().onFocusChanged(({ payload }) => {
+      if (!payload) setContextMenu(null);
+    });
 
     return () => {
       unlistenAction.then((dispose) => dispose());
@@ -48,6 +54,8 @@ export function PetApp() {
       unlistenScale.then((dispose) => dispose());
       unlistenVoiceStart.then((dispose) => dispose());
       unlistenVoiceStop.then((dispose) => dispose());
+      unlistenFocus.then((dispose) => dispose());
+      if (hideTimer.current !== null) window.clearTimeout(hideTimer.current);
     };
   }, []);
 
@@ -67,9 +75,31 @@ export function PetApp() {
   }, [clickThrough]);
 
   async function openControls() {
+    setContextMenu(null);
     const controls = await Window.getByLabel("controls");
     await controls?.show();
     await controls?.setFocus();
+  }
+
+  function openContextMenu(event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu({
+      x: Math.min(event.clientX, window.innerWidth - 190),
+      y: Math.min(event.clientY, window.innerHeight - 210),
+    });
+  }
+
+  async function hideFor(durationMs: number) {
+    setContextMenu(null);
+    const pet = getCurrentWindow();
+    await pet.hide();
+    if (hideTimer.current !== null) window.clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(() => {
+      pet.show().catch(() => undefined);
+      pet.setFocus().catch(() => undefined);
+      hideTimer.current = null;
+    }, durationMs);
   }
 
   function handleRockyPointerDown(event: PointerEvent<HTMLButtonElement>) {
@@ -96,7 +126,7 @@ export function PetApp() {
     setChatBusy(true);
     emit("rocky-manual-busy", true).catch(() => undefined);
     setChatLines((lines) => [...lines, { speaker: "human", text: trimmed }]);
-    setAction({ mood: "focused", animation: "think", speech: "Rocky thinking. Tiny gears no, rocks yes.", durationMs: 12_000 });
+    setAction({ mood: "focused", animation: "think", speech: "Thinking. Rocky arrange thought rocks...", durationMs: 20_000 });
 
     try {
       const [settings, observation] = await Promise.all([
@@ -200,13 +230,14 @@ export function PetApp() {
     if (options.openChat) {
       setChatOpen(true);
     }
-    setAction({ mood: "curious", animation: "inspect", speech: "Listening. Touch the wave.", durationMs: 20_000 });
+    setAction({ mood: "curious", animation: "inspect", speech: "Listening... sound waves touch Rocky.", durationMs: 20_000 });
   }
 
   async function stopVoice() {
     if (!voiceRecording.current) return;
     voiceRecording.current = false;
     setVoiceState("transcribing");
+    setAction({ mood: "focused", animation: "think", speech: "Transcribing... Rocky translate sound.", durationMs: 20_000 });
 
     try {
       const transcript = (await stopVoiceRecordingAndTranscribe()).trim();
@@ -218,6 +249,8 @@ export function PetApp() {
       }
 
       setChatInput("");
+      setAction({ mood: "curious", animation: "talk", speech: `Heard: ${truncateSpeech(transcript)}`, durationMs: 2_000 });
+      await wait(650);
       await sendMessage(transcript);
     } catch (error) {
       const message = formatError(error);
@@ -239,19 +272,10 @@ export function PetApp() {
   const rockyHeight = Math.round(250 * petScale);
   const rockyBottom = Math.round(14 + 10 * petScale);
   const speechTop = Math.max(58, 520 - rockyHeight - rockyBottom - 92);
-  const controlsTop = Math.max(8, speechTop - 54);
 
   return (
-    <main className="relative h-screen w-screen select-none overflow-hidden bg-[radial-gradient(ellipse_at_50%_84%,rgba(0,0,0,0.38),transparent_30%)]">
+    <main className="relative h-screen w-screen select-none overflow-hidden bg-[radial-gradient(ellipse_at_50%_84%,rgba(0,0,0,0.38),transparent_30%)]" onContextMenu={openContextMenu} onPointerDown={() => contextMenu && setContextMenu(null)}>
       <div className="absolute inset-0 z-10" onPointerDown={() => getCurrentWindow().startDragging().catch(() => undefined)} />
-      <button
-        className="absolute right-5 top-5 z-30 rounded-full border border-emerald-200/30 bg-zinc-950/60 px-3 py-2 text-[11px] uppercase tracking-[0.08em] text-emerald-50/90 backdrop-blur-xl"
-        style={{ top: controlsTop }}
-        onClick={openControls}
-        aria-label="Open controls"
-      >
-        rocky.sys
-      </button>
       <div className="absolute inset-x-0 h-[300px]" style={{ bottom: rockyBottom, transform: `scale(${petScale})`, transformOrigin: "50% 100%" }}>
         <RockyScene animation={action.animation} interactive={false} />
       </div>
@@ -263,6 +287,20 @@ export function PetApp() {
         onPointerUp={handleRockyPointerUp}
       />
       {!isQuietObserveSpeech(action.speech) && <SpeechBubble text={action.speech} mood={action.mood} top={speechTop} />}
+      {contextMenu && (
+        <div
+          className="absolute z-50 grid w-44 gap-1 rounded-2xl border border-emerald-100/20 bg-zinc-950/95 p-2 text-sm text-emerald-50 shadow-2xl shadow-black/50 backdrop-blur-xl"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onContextMenu={(event) => event.preventDefault()}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <button className="context-menu-item" type="button" onClick={openControls}>Open control panel</button>
+          <button className="context-menu-item" type="button" onClick={() => hideFor(5 * 60_000)}>Hide for 5 min</button>
+          <button className="context-menu-item" type="button" onClick={() => hideFor(30 * 60_000)}>Hide for 30 min</button>
+          <button className="context-menu-item" type="button" onClick={() => hideFor(60 * 60_000)}>Hide for 1 hr</button>
+          <button className="context-menu-item border-t border-emerald-100/10 text-amber-100" type="button" onClick={() => quitApp()}>Quit Rocky</button>
+        </div>
+      )}
       {chatOpen && (
         <section
           className="absolute left-1/2 z-40 grid max-h-[220px] w-[330px] -translate-x-1/2 grid-rows-[auto_1fr_auto] gap-2 rounded-3xl border border-emerald-200/25 bg-zinc-950/88 p-3 text-emerald-50 shadow-2xl shadow-black/40 backdrop-blur-2xl"
@@ -345,6 +383,15 @@ function isQuietObserveSpeech(speech: string) {
 function shouldReadScreen(message: string) {
   const lower = message.toLowerCase();
   return lower.includes("read screen") || lower.includes("read my screen") || lower.includes("ocr") || lower.includes("what is on my screen") || lower.includes("what's on my screen");
+}
+
+function truncateSpeech(text: string) {
+  const trimmed = text.trim();
+  return trimmed.length > 88 ? `${trimmed.slice(0, 85)}...` : trimmed;
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function formatError(error: unknown) {

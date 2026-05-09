@@ -102,6 +102,7 @@ export function ControlsApp() {
       .catch(() => setVoiceModels([]));
 
     refreshMemories();
+
   }, []);
 
   useEffect(() => {

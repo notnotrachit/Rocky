@@ -43,7 +43,8 @@ pub fn run() {
             commands::download_voice_model,
             commands::validate_voice_shortcut,
             commands::start_voice_recording,
-            commands::stop_voice_recording_and_transcribe
+            commands::stop_voice_recording_and_transcribe,
+            commands::quit_app
         ])
         .run(tauri::generate_context!())
         .expect("error while running Rocky");

@@ -127,3 +127,8 @@ pub fn start_voice_recording(app: AppHandle) -> Result<(), CommandError> {
 pub async fn stop_voice_recording_and_transcribe(app: AppHandle) -> Result<String, CommandError> {
     voice::stop_recording_and_transcribe(app).await
 }
+
+#[tauri::command]
+pub fn quit_app(app: AppHandle) {
+    app.exit(0);
+}

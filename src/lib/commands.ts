@@ -93,6 +93,10 @@ export function stopVoiceRecordingAndTranscribe() {
   return invoke<string>("stop_voice_recording_and_transcribe");
 }
 
+export function quitApp() {
+  return invoke("quit_app");
+}
+
 export function emitPetAction(action: PetAction) {
   return import("@tauri-apps/api/event").then(({ emit }) => emit("pet-action", action));
 }
