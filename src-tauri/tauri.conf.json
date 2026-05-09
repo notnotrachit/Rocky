@@ -15,7 +15,7 @@
         "label": "pet",
         "title": "Rocky",
         "width": 380,
-        "height": 560,
+        "height": 420,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,

@@ -1,6 +1,6 @@
 import { FormEvent, PointerEvent, MouseEvent, useEffect, useRef, useState } from "react";
 import { emit, listen } from "@tauri-apps/api/event";
-import { getCurrentWindow, Window } from "@tauri-apps/api/window";
+import { getCurrentWindow, LogicalSize, PhysicalPosition, Window } from "@tauri-apps/api/window";
 import RockyScene from "../RockyScene";
 import { SpeechBubble } from "../components/SpeechBubble";
 import { captureScreenImage, getAccessibilityObservation, getControlSettings, getPetScale, planPetAction, planPetActionWithImage, quitApp, readScreenText, setControlSettings, setPetScale as persistPetScale, startVoiceRecording, stopVoiceRecordingAndTranscribe } from "../lib/commands";
@@ -14,6 +14,15 @@ type ChatLine = {
 
 type VoiceState = "idle" | "listening" | "transcribing";
 type ContextMenuState = { x: number; y: number } | null;
+
+const PET_BASE_WIDTH = 380;
+const PET_BASE_SCENE_HEIGHT = 270;
+const PET_BASE_ROCKY_HIT_HEIGHT = 230;
+const PET_BASE_BOTTOM = 16;
+const PET_MIN_UI_WIDTH = 380;
+const PET_CHAT_HEIGHT = 210;
+const PET_SPEECH_HEIGHT = 96;
+const PET_VERTICAL_GAP = 18;
 
 export function PetApp() {
   const [action, setAction] = useState<PetAction>(idleAction);
@@ -32,6 +41,14 @@ export function PetApp() {
   const voiceRecording = useRef(false);
   const chatBusyRef = useRef(false);
   const hideTimer = useRef<number | null>(null);
+  const lastWindowFrame = useRef<{ width: number; height: number } | null>(null);
+  const speechVisible = !isQuietObserveSpeech(action.speech);
+  const scaledSceneWidth = Math.round(PET_BASE_WIDTH * petScale);
+  const scaledSceneHeight = Math.round(PET_BASE_SCENE_HEIGHT * petScale);
+  const needsPanelWidth = chatOpen || speechVisible || contextMenu !== null;
+  const windowWidth = Math.max(needsPanelWidth ? PET_MIN_UI_WIDTH : 300, scaledSceneWidth);
+  const contentTopHeight = chatOpen ? PET_CHAT_HEIGHT + PET_VERTICAL_GAP : speechVisible ? PET_SPEECH_HEIGHT + PET_VERTICAL_GAP : contextMenu !== null ? 48 : 0;
+  const windowHeight = Math.round(contentTopHeight + scaledSceneHeight + PET_BASE_BOTTOM);
 
   useEffect(() => {
     getPetScale().then(setPetScale).catch(() => undefined);
@@ -74,6 +91,30 @@ export function PetApp() {
   useEffect(() => {
     getCurrentWindow().setIgnoreCursorEvents(clickThrough).catch(() => undefined);
   }, [clickThrough]);
+
+  useEffect(() => {
+    const pet = getCurrentWindow();
+    const previousFrame = lastWindowFrame.current;
+    lastWindowFrame.current = { width: windowWidth, height: windowHeight };
+
+    async function resizePetWindow() {
+      try {
+        if (previousFrame !== null && (previousFrame.width !== windowWidth || previousFrame.height !== windowHeight)) {
+          const scaleFactor = await pet.scaleFactor();
+          const position = await pet.outerPosition();
+          const deltaX = Math.round(((previousFrame.width - windowWidth) / 2) * scaleFactor);
+          const deltaY = Math.round((previousFrame.height - windowHeight) * scaleFactor);
+          await pet.setPosition(new PhysicalPosition(position.x + deltaX, position.y + deltaY));
+        }
+
+        await pet.setSize(new LogicalSize(windowWidth, windowHeight));
+      } catch (error) {
+        console.error("Rocky window resize failed", error);
+      }
+    }
+
+    resizePetWindow();
+  }, [windowHeight, windowWidth]);
 
   async function openControls() {
     setContextMenu(null);
@@ -311,24 +352,35 @@ export function PetApp() {
     }
   }
 
-  const rockyHeight = Math.round(250 * petScale);
-  const rockyBottom = Math.round(14 + 10 * petScale);
-  const speechTop = Math.max(58, 520 - rockyHeight - rockyBottom - 92);
+  const rockyHeight = Math.round(PET_BASE_ROCKY_HIT_HEIGHT * petScale);
+  const rockyBottom = PET_BASE_BOTTOM;
+  const sceneBottom = PET_BASE_BOTTOM;
+  const speechTop = Math.max(12, contentTopHeight - PET_SPEECH_HEIGHT - 2);
+  const chatWidth = Math.min(Math.max(windowWidth - 32, 330), 520);
 
   return (
     <main className="relative h-screen w-screen select-none overflow-hidden bg-[radial-gradient(ellipse_at_50%_84%,rgba(0,0,0,0.38),transparent_30%)]" onContextMenu={openContextMenu} onPointerDown={() => contextMenu && setContextMenu(null)}>
-      <div className="absolute inset-0 z-10" onPointerDown={() => getCurrentWindow().startDragging().catch(() => undefined)} />
-      <div className="absolute inset-x-0 h-[300px]" style={{ bottom: rockyBottom, transform: `scale(${petScale})`, transformOrigin: "50% 100%" }}>
+      <div
+        className="absolute left-1/2"
+        style={{
+          bottom: sceneBottom,
+          width: PET_BASE_WIDTH,
+          height: PET_BASE_SCENE_HEIGHT,
+          transform: `translateX(-50%) scale(${petScale})`,
+          transformOrigin: "50% 100%",
+        }}
+      >
         <RockyScene animation={action.animation} interactive={false} />
       </div>
       <button
-        className="absolute left-1/2 z-[25] w-[62%] -translate-x-1/2 rounded-[45%] bg-transparent"
-        style={{ bottom: rockyBottom, height: rockyHeight }}
+        className="absolute left-1/2 z-[25] -translate-x-1/2 rounded-[45%] bg-transparent"
+        style={{ bottom: rockyBottom, width: Math.round(windowWidth * 0.64), height: rockyHeight }}
         aria-label="Chat with Rocky"
+        onContextMenu={openContextMenu}
         onPointerDown={handleRockyPointerDown}
         onPointerUp={handleRockyPointerUp}
       />
-      {!isQuietObserveSpeech(action.speech) && <SpeechBubble text={action.speech} mood={action.mood} top={speechTop} />}
+      {!chatOpen && speechVisible && <SpeechBubble text={action.speech} mood={action.mood} top={speechTop} />}
       {contextMenu && (
         <div
           className="absolute z-50 grid w-44 gap-1 rounded-2xl border border-emerald-100/20 bg-zinc-950/95 p-2 text-sm text-emerald-50 shadow-2xl shadow-black/50 backdrop-blur-xl"
@@ -345,8 +397,8 @@ export function PetApp() {
       )}
       {chatOpen && (
         <section
-          className="absolute left-1/2 z-40 grid max-h-[220px] w-[330px] -translate-x-1/2 grid-rows-[auto_1fr_auto] gap-2 rounded-3xl border border-emerald-200/25 bg-zinc-950/88 p-3 text-emerald-50 shadow-2xl shadow-black/40 backdrop-blur-2xl"
-          style={{ top: "12px" }}
+          className="absolute left-1/2 z-40 grid max-h-[210px] -translate-x-1/2 grid-rows-[auto_1fr_auto] gap-2 rounded-3xl border border-emerald-200/25 bg-zinc-950/88 p-3 text-emerald-50 shadow-2xl shadow-black/40 backdrop-blur-2xl"
+          style={{ top: "8px", width: chatWidth }}
         >
           <header className="flex items-center justify-between gap-3">
             <div>
